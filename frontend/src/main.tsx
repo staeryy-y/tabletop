@@ -5,16 +5,22 @@ import { ApiError, Me, auth } from "./net/api";
 import { Login } from "./ui/Login";
 import { AccountSetup } from "./ui/AccountSetup";
 import { AdminDashboard } from "./ui/AdminDashboard";
+import { GamePackages } from "./ui/GamePackages";
 import { RoomJoin } from "./ui/RoomJoin";
 import { RoomTable } from "./ui/RoomTable";
 
-type Route = { view: "dashboard" } | { view: "join"; slug: string } | { view: "room"; slug: string };
+type Route =
+  | { view: "dashboard" }
+  | { view: "packages" }
+  | { view: "join"; slug: string }
+  | { view: "room"; slug: string };
 
 function parseHash(): Route {
   const hash = location.hash.replace(/^#\/?/, "");
   const [kind, slug] = hash.split("/");
   if (kind === "join" && slug) return { view: "join", slug };
   if (kind === "room" && slug) return { view: "room", slug };
+  if (kind === "packages") return { view: "packages" };
   return { view: "dashboard" };
 }
 
@@ -50,6 +56,7 @@ function App() {
   if (me === undefined) return <div class="centered-page">Loading…</div>;
   if (me === null) return <Login onLoggedIn={setMe} />;
   if (me.mustChangePassword) return <AccountSetup me={me} onDone={setMe} />;
+  if (route.view === "packages") return <GamePackages />;
   return <AdminDashboard me={me} onLoggedOut={() => setMe(null)} />;
 }
 

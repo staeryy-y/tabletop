@@ -33,11 +33,28 @@ body {
   min-height: 100vh;
 }
 
+/* Press Start 2P's glyphs are roughly square and much wider per character than a normal
+   font — using it at a browser-default heading size (h1 ~2em) badly overflowed narrow
+   layouts (the dashboard's header in particular, see IMPLEMENTATION_LOG.md). Every
+   heading gets an explicit, much smaller size here instead of inheriting the default. */
 h1,
 h2,
 h3 {
   font-family: var(--font-pixel);
-  line-height: 1.5;
+  line-height: 1.6;
+  margin: 0 0 8px;
+}
+
+h1 {
+  font-size: 1.1rem;
+}
+
+h2 {
+  font-size: 0.85rem;
+}
+
+h3 {
+  font-size: 0.75rem;
 }
 
 .centered-page {
@@ -110,7 +127,7 @@ button:disabled {
 }
 
 .dashboard {
-  max-width: 720px;
+  max-width: 960px;
   margin: 0 auto;
   padding: 24px 16px;
   display: flex;
@@ -120,8 +137,16 @@ button:disabled {
 
 .dashboard header {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
+  gap: 8px 16px;
+}
+
+.dashboard nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .dashboard header > div {

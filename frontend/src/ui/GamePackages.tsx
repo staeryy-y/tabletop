@@ -64,45 +64,51 @@ export function GamePackages() {
     }
   }
 
-  if (editing) {
-    return (
-      <section class="panel">
-        <h2>{editing.id ? `Edit "${editing.pkg.name}"` : "New game package"}</h2>
-        <GamePackageEditor initial={editing.pkg} onSave={save} onCancel={() => setEditing(null)} />
-      </section>
-    );
-  }
-
   return (
-    <section class="panel">
-      <h2>Game packages</h2>
-      <p class="hint">
-        Rules content — tracks, dice, cards, pieces, macros — for rooms to use. Cards can have images or
-        just text; pieces can have images or an emoji/symbol. Lives in this browser only (see
-        docs/DECISIONS.md D14) — export a package to share or back it up.
-      </p>
-      {error && <p class="error">{error}</p>}
-      <ul class="room-list">
-        {packages.map((record) => (
-          <li key={record.id}>
-            <strong>{record.pkg.name}</strong>
-            <span class="hint">
-              {" "}
-              &middot; {record.pkg.cardSets.length} card set(s), {record.pkg.pieceSets.length} piece set(s) &middot;{" "}
-            </span>
-            <button onClick={() => setEditing(record)}>Edit</button>{" "}
-            <button onClick={() => exportPackage(record)}>Export</button>{" "}
-            <button onClick={() => remove(record.id)}>Delete</button>
-          </li>
-        ))}
-        {packages.length === 0 && <li class="hint">No custom packages yet — create one, or import a file.</li>}
-      </ul>
-      <div class="editor-actions">
-        <button onClick={() => setEditing({ id: null, pkg: createEmptyPackage("New Package") })}>
-          + New package
-        </button>
-        <input ref={fileInput} type="file" accept="application/json" onChange={(e) => importFile((e.target as HTMLInputElement).files?.[0])} />
-      </div>
-    </section>
+    <div class="dashboard">
+      <header>
+        <h1>Game packages</h1>
+        <nav>
+          <a href="#/">&larr; Dashboard</a>
+        </nav>
+      </header>
+
+      {editing ? (
+        <section class="panel">
+          <h2>{editing.id ? `Edit "${editing.pkg.name}"` : "New game package"}</h2>
+          <GamePackageEditor initial={editing.pkg} onSave={save} onCancel={() => setEditing(null)} />
+        </section>
+      ) : (
+        <section class="panel">
+          <p class="hint">
+            Rules content — tracks, dice, cards, pieces, macros — for rooms to use. Cards can have images or
+            just text; pieces can have images or an emoji/symbol. Lives in this browser only (see
+            docs/DECISIONS.md D14) — export a package to share or back it up.
+          </p>
+          {error && <p class="error">{error}</p>}
+          <ul class="room-list">
+            {packages.map((record) => (
+              <li key={record.id}>
+                <strong>{record.pkg.name}</strong>
+                <span class="hint">
+                  {" "}
+                  &middot; {record.pkg.cardSets.length} card set(s), {record.pkg.pieceSets.length} piece set(s) &middot;{" "}
+                </span>
+                <button onClick={() => setEditing(record)}>Edit</button>{" "}
+                <button onClick={() => exportPackage(record)}>Export</button>{" "}
+                <button onClick={() => remove(record.id)}>Delete</button>
+              </li>
+            ))}
+            {packages.length === 0 && <li class="hint">No custom packages yet — create one, or import a file.</li>}
+          </ul>
+          <div class="editor-actions">
+            <button onClick={() => setEditing({ id: null, pkg: createEmptyPackage("New Package") })}>
+              + New package
+            </button>
+            <input ref={fileInput} type="file" accept="application/json" onChange={(e) => importFile((e.target as HTMLInputElement).files?.[0])} />
+          </div>
+        </section>
+      )}
+    </div>
   );
 }

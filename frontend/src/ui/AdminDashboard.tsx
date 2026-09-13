@@ -2,7 +2,6 @@ import { useEffect, useState } from "preact/hooks";
 import { ApiError, Me, RoomSummary, UserSummary, auth, rooms, users } from "../net/api";
 import { StoredPackage, PackageStore } from "../packages/packageStore";
 import { rememberRoomPackageId } from "../roomPackageChoice";
-import { GamePackages } from "./GamePackages";
 
 const packageStore = new PackageStore();
 
@@ -73,6 +72,9 @@ export function AdminDashboard({ me, onLoggedOut }: { me: Me; onLoggedOut: () =>
     <div class="dashboard">
       <header>
         <h1>rpg-tabletop</h1>
+        <nav>
+          <a href="#/packages">Game packages</a>
+        </nav>
         <div>
           Logged in as <strong>{me.username}</strong>
           <button onClick={logout}>Log out</button>
@@ -154,8 +156,6 @@ export function AdminDashboard({ me, onLoggedOut }: { me: Me; onLoggedOut: () =>
           <button type="submit">Create user</button>
         </form>
       </section>
-
-      <GamePackages />
     </div>
   );
 }
