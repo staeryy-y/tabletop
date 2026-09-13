@@ -31,6 +31,13 @@ const CAMERA_PAN_SPEED = 400; // world units/second
 const CAMERA_ROTATE_SPEED = Math.PI / 2; // radians/second
 const PLAYER_TOKEN_RADIUS = 16;
 const PLAYER_SEAT_RADIUS = 260;
+/** A plain dark canvas gave players no sense of scale or where "the middle" is — a
+ * small center marker plus concentric square rings, both centered on world (0, 0),
+ * fixes that with nothing more than static Graphics (no textures, no per-frame cost).
+ * Not a movement grid or a snapping aid, just a point of reference. */
+const TABLE_BACKGROUND_CENTER_RADIUS = 8;
+const TABLE_BACKGROUND_RING_SPACING = 150;
+const TABLE_BACKGROUND_RING_COUNT = 6;
 /** How often a synced drag or rotate sends a "drag-hint"/"rotate-hint"
  * (net/syncProtocol.ts) while it's in progress, so other players see roughly what's
  * happening instead of it teleporting only when the gesture ends — coarse on purpose (a
@@ -110,6 +117,7 @@ export class TableApp implements TableView {
     container.appendChild(this.app.canvas);
     this.app.stage.addChild(this.world);
     this.world.position.set(container.clientWidth / 2, container.clientHeight / 2);
+    this.world.addChild(this.drawTableBackground()); // added first — behind every pile/token
 
     this.app.stage.eventMode = "static";
     this.app.stage.hitArea = this.app.screen;
@@ -320,6 +328,21 @@ export class TableApp implements TableView {
       const pile = this.model.spawnStack(defs, worldX, worldY);
       if (pile) this.mountView(pile);
     }
+  }
+
+  /** A static reference marker — see TABLE_BACKGROUND_*'s doc comment — drawn once at
+   * init() and never redrawn (it doesn't represent any model state, so there's nothing
+   * to keep in sync). */
+  private drawTableBackground(): Graphics {
+    const g = new Graphics();
+    g.circle(0, 0, TABLE_BACKGROUND_CENTER_RADIUS);
+    g.fill({ color: 0x3a3947 });
+    for (let i = 1; i <= TABLE_BACKGROUND_RING_COUNT; i++) {
+      const half = i * TABLE_BACKGROUND_RING_SPACING;
+      g.rect(-half, -half, half * 2, half * 2);
+      g.stroke({ width: 2, color: 0x35333f });
+    }
+    return g;
   }
 
   // --- Wiring a PileState to an on-screen Container. The view is purely a rendering

@@ -103,6 +103,23 @@ that touched this log.
 
 Newest first. Fixed items move to "Implemented" above with a note here of what changed.
 
+- **(Fixed)** A batch of smaller room-UI feedback:
+  - The demo deck was still spawning alongside a real game package's cards — a real
+    ordering bug: the host used to seed the demo deck immediately (package loading is
+    async and usually hadn't resolved yet), then separately seed the package's cards
+    once it *did* load, so both ended up on the table. `seedStarterContentIfHost` now
+    makes this one decision, once, only after the package is actually known.
+  - The table was a plain dark void with no sense of scale or center — `engine/table.ts`
+    now draws a small center marker and concentric square rings (static Graphics, no
+    per-frame cost, not a movement grid) once at init.
+  - The "+ Card" spawn button is now host-only (still not the actual player who can spawn
+    on the wire — anyone's request would still work — see the button's own comment).
+  - An "Invite link" button in the player-list panel copies the room's guest join URL
+    to the clipboard, so sharing it doesn't require going back to the dashboard.
+  - The 8 always-visible color swatches ("the colors take too much out of the UI") are
+    now behind a dropdown opened from a single swatch-preview button, matching the
+    chat/help dropdown pattern.
+
 - **(Fixed)** The dashboard and game-package manager pages were stuck at 360px wide on
   any normal-width screen. Cause: `.panel` (the small, deliberately-360px-capped shape
   meant for the login/account-setup/room-join dialogs) was also being reused, wrongly,

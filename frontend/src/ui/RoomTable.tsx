@@ -77,7 +77,7 @@ export function RoomTable({ slug }: { slug: string }) {
   // migration), it knows who to open links to without waiting on another round trip.
   const otherPeerIdsRef = useRef<Set<string>>(new Set());
   const loadedPkgRef = useRef<GamePackage | null>(null);
-  const seededRef = useRef({ demo: false, pkg: false });
+  const seededRef = useRef({ pkg: false });
   // The room's game_def_ref (see app/rooms.py), remembered from `welcome` so later
   // events (host-changed) know whether a package transfer is even relevant — only a
   // "custom" room's package needs P2P transfer at all (see packageDistributorRef).
@@ -94,6 +94,7 @@ export function RoomTable({ slug }: { slug: string }) {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatOpen, setChatOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [colorMenuOpen, setColorMenuOpen] = useState(false);
 
   useEffect(() => {
     const token = loadRoomToken(slug);
@@ -118,19 +119,26 @@ export function RoomTable({ slug }: { slug: string }) {
     // to be host — see the field comments on seededRef/loadedPkgRef. Every other peer
     // gets the same cards via the host's snapshot/broadcasts instead of spawning its
     // own (independent, diverging) copies.
-    function seedDemoDeckIfHost(): void {
-      if (seededRef.current.demo || !roomConnRef.current?.isHost) return;
-      seededRef.current.demo = true;
-      DEMO_DECK.forEach((def, i) => table.spawnCard(def, (i - 2.5) * 70, 150));
-    }
-    function seedPackageIfHost(loaded: GamePackage): void {
+    //
+    // This is one decision, not two: it used to unconditionally seed the demo deck the
+    // moment this client became host (package loading is async and usually hasn't
+    // resolved yet at that point), then separately seed the package's own cards once
+    // it *did* load — so a room with a real package still got the demo deck first,
+    // permanently, since nothing ever removed it. seedStarterContentIfHost only fires
+    // once the package is actually known, and picks exactly one of the two.
+    function seedStarterContentIfHost(loaded: GamePackage): void {
       if (seededRef.current.pkg || !roomConnRef.current?.isHost) return;
       seededRef.current.pkg = true;
+      const spawns = cardSetSpawnsFromPackage(loaded);
+      if (spawns.length === 0) {
+        DEMO_DECK.forEach((def, i) => table.spawnCard(def, (i - 2.5) * 70, 150));
+        return;
+      }
       // Each card set spawns as one already-stacked pile (e.g. "a stack of all the
       // role cards" — not N separate individual piles), at the position the package
       // author configured (or the same auto-spread default this project always used,
       // if they never touched it — see startingLayout.ts).
-      for (const spawn of cardSetSpawnsFromPackage(loaded)) {
+      for (const spawn of spawns) {
         table.spawnStack(spawn.defs, spawn.startX, spawn.startY);
       }
     }
@@ -192,7 +200,7 @@ export function RoomTable({ slug }: { slug: string }) {
           if (disposed) return;
           setPkg(received);
           loadedPkgRef.current = received;
-          seedPackageIfHost(received);
+          seedStarterContentIfHost(received);
         });
         packageDistributorRef.current = distributor;
 
@@ -217,7 +225,7 @@ export function RoomTable({ slug }: { slug: string }) {
               if (disposed) return;
               setPkg(loaded);
               loadedPkgRef.current = loaded;
-              seedPackageIfHost(loaded);
+              seedStarterContentIfHost(loaded);
             } catch (err) {
               console.error("failed to load game package", err);
             }
@@ -236,7 +244,7 @@ export function RoomTable({ slug }: { slug: string }) {
             distributor.setLocalPackage(customPkg);
             setPkg(customPkg);
             loadedPkgRef.current = customPkg;
-            seedPackageIfHost(customPkg);
+            seedStarterContentIfHost(customPkg);
           } else if (loadedPkgRef.current === null) {
             // Show an honest placeholder rather than a blank table while the transfer
             // is in flight — distributor's onReceived callback above replaces it the
@@ -289,18 +297,16 @@ export function RoomTable({ slug }: { slug: string }) {
           const snapshot = localSnapshot ?? serverSnapshot;
           if (snapshot !== null && snapshot.length > 0) {
             // Resuming real content (from local storage, or a genuine peer migration
-            // that already had state) — never inject the starter demo deck/package
-            // cards on top of it. seedDemoDeckIfHost/seedPackageIfHost's own flags
-            // only ever protect against seeding *twice*, not against seeding into an
-            // already-nonempty table, so pre-marking them here is what actually
-            // prevents duplicated content on every resume.
-            seededRef.current.demo = true;
+            // that already had state) — never inject starter content on top of it.
+            // seedStarterContentIfHost's own flag only ever protects against seeding
+            // *twice*, not against seeding into an already-nonempty table, so
+            // pre-marking it here is what actually prevents duplicated content on
+            // every resume.
             seededRef.current.pkg = true;
           }
           const client = roomConnRef.current.becomeHostFromMigration(snapshot, [...otherPeerIdsRef.current]);
           table.setSyncClient(client);
-          seedDemoDeckIfHost();
-          if (loadedPkgRef.current) seedPackageIfHost(loadedPkgRef.current);
+          if (loadedPkgRef.current) seedStarterContentIfHost(loadedPkgRef.current);
         })();
       }
     });
@@ -327,12 +333,14 @@ export function RoomTable({ slug }: { slug: string }) {
   }, [peers]);
 
   const me = selfId ? peers.get(selfId) : undefined;
+  const isHost = selfId !== null && selfId === hostId;
 
   function spawnRandomCard() {
-    // Not yet gated to the GM (docs/ARCHITECTURE.md "Roles: GM vs. players") — anyone
-    // can spawn for now — but the spawn itself is real: it goes through TableApp's
-    // syncClient (net/roomConnection.ts) like every other action, so it reaches every
-    // connected peer.
+    // Gated to the host in the UI (below) — still not to the GM specifically
+    // (docs/ARCHITECTURE.md "Roles: GM vs. players"), which per D13 is normally the
+    // same person anyway. The spawn itself is real either way: it goes through
+    // TableApp's syncClient (net/roomConnection.ts) like every other action, so it
+    // reaches every connected peer.
     const deck = pkg ? cardSetSpawnsFromPackage(pkg).flatMap((s) => s.defs) : [];
     const pool = deck.length > 0 ? deck : DEMO_DECK;
     const def = pool[Math.floor(Math.random() * pool.length)];
@@ -351,6 +359,19 @@ export function RoomTable({ slug }: { slug: string }) {
     chatDistributorRef.current?.post(message);
   }
 
+  const [linkCopied, setLinkCopied] = useState(false);
+  async function copyInviteLink() {
+    const url = `${location.origin}${location.pathname}#/join/${slug}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 1500);
+    } catch {
+      // Clipboard API can be unavailable (an insecure context, browser permissions) —
+      // nothing else to fall back to here, so just leave the button's label unchanged.
+    }
+  }
+
   const eyesClosed = me?.eyesClosed ?? false;
 
   return (
@@ -362,6 +383,9 @@ export function RoomTable({ slug }: { slug: string }) {
       <div class="hud-players">
         <h2>{roomName}</h2>
         {pkg && <p class="hint hud-pkg-name">{pkg.name}</p>}
+        <button class="hud-invite-button" onClick={copyInviteLink}>
+          {linkCopied ? "Copied!" : "\u{1F517} Invite link"}
+        </button>
         <ul class="peer-list">
           {[...peers.values()].map((p) => (
             <li key={p.peerId} class={p.eyesClosed ? "eyes-closed" : ""}>
@@ -404,9 +428,11 @@ export function RoomTable({ slug }: { slug: string }) {
         <a href="#/" class="hud-icon-button" title="Back to dashboard">
           &larr;
         </a>
-        <button onClick={spawnRandomCard} title="Spawn a random card">
-          + Card
-        </button>
+        {isHost && (
+          <button onClick={spawnRandomCard} title="Spawn a random card">
+            + Card
+          </button>
+        )}
         <button
           class={"hud-icon-button" + (eyesClosed ? " active" : "")}
           onClick={toggleEyesClosed}
@@ -414,22 +440,23 @@ export function RoomTable({ slug }: { slug: string }) {
         >
           {eyesClosed ? "\u{1F648}" : "\u{1F441}"}
         </button>
-        <div class="swatches">
-          {COLOR_SWATCHES.map((c) => (
-            <button
-              key={c}
-              class={"swatch" + (me?.color === c ? " selected" : "")}
-              style={{ background: c }}
-              onClick={() => pickColor(c)}
-              aria-label={`use color ${c}`}
-            />
-          ))}
-        </div>
+        <button
+          class={"hud-icon-button" + (colorMenuOpen ? " active" : "")}
+          onClick={() => {
+            setColorMenuOpen((o) => !o);
+            setChatOpen(false);
+            setHelpOpen(false);
+          }}
+          title="Change your color"
+        >
+          <span class="hud-color-preview" style={{ background: me?.color ?? "#888888" }} />
+        </button>
         <button
           class={"hud-icon-button" + (chatOpen ? " active" : "")}
           onClick={() => {
             setChatOpen((o) => !o);
             setHelpOpen(false);
+            setColorMenuOpen(false);
           }}
         >
           {"\u{1F4AC}"} Chat
@@ -439,12 +466,32 @@ export function RoomTable({ slug }: { slug: string }) {
           onClick={() => {
             setHelpOpen((o) => !o);
             setChatOpen(false);
+            setColorMenuOpen(false);
           }}
           title="How to play"
         >
           ?
         </button>
       </div>
+
+      {colorMenuOpen && (
+        <div class="hud-chat hud-color-menu">
+          <div class="swatches">
+            {COLOR_SWATCHES.map((c) => (
+              <button
+                key={c}
+                class={"swatch" + (me?.color === c ? " selected" : "")}
+                style={{ background: c }}
+                onClick={() => {
+                  pickColor(c);
+                  setColorMenuOpen(false);
+                }}
+                aria-label={`use color ${c}`}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       {eyesClosed && (
         <div class="eyes-closed-overlay">

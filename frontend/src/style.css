@@ -237,6 +237,15 @@ button:disabled {
   margin: 0 0 8px;
 }
 
+.hud-invite-button {
+  width: 100%;
+  margin-bottom: 8px;
+  font-size: 0.6rem;
+  padding: 8px;
+  background: var(--border);
+  color: var(--text);
+}
+
 .peer-list {
   list-style: none;
   padding: 0;
@@ -305,17 +314,27 @@ button.hud-icon-button.active {
   color: #111;
 }
 
-.hud-toolbar .swatches {
+/* The color picker used to sit inline in the toolbar as 8 always-visible swatches —
+   "the colors take too much out of the UI" — now tucked behind a dropdown
+   (.hud-color-menu) like chat/help, opened from a single small swatch-preview button. */
+.hud-color-menu .swatches {
   display: flex;
-  gap: 4px;
-  padding: 0 4px;
-  border-left: 1px solid var(--border);
-  border-right: 1px solid var(--border);
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+}
+
+.hud-color-preview {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid #1a1a1a;
 }
 
 .swatch {
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   padding: 0;
   border: 2px solid transparent;
