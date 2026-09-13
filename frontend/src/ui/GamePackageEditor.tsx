@@ -1,4 +1,4 @@
-import { useState } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 import {
   CardEntry,
   CardSet,
@@ -11,9 +11,14 @@ import {
   validatePackage,
 } from "../packages/gamePackage";
 import { readImageAsDataUrl } from "../packages/imageUpload";
+import { defaultCardSetPosition } from "../packages/startingLayout";
 
 let nextId = 1;
 const freshId = (prefix: string) => `${prefix}-${nextId++}`;
+
+function colorToCss(color: number | undefined): string | undefined {
+  return color === undefined ? undefined : `#${color.toString(16).padStart(6, "0")}`;
+}
 
 function parseNumberList(text: string): number[] {
   return text
@@ -177,11 +182,17 @@ function CardSetsEditor({ cardSets, onChange }: { cardSets: CardSet[]; onChange:
   }
 
   return (
-    <Section title="Card sets">
+    <Section title="Card sets — each spawns as one labeled, shufflable stack">
+      <StartingLayoutPreview cardSets={cardSets} onMove={updateSet} />
       {cardSets.map((set, i) => (
         <div class="editor-subsection" key={i}>
           <div class="editor-row">
             <input class="key-input" value={set.key} placeholder="set key" onInput={(e) => updateSet(i, { key: (e.target as HTMLInputElement).value })} />
+            <input
+              value={set.label ?? ""}
+              placeholder="label shown on the table, e.g. Role Cards"
+              onInput={(e) => updateSet(i, { label: (e.target as HTMLInputElement).value || undefined })}
+            />
             <button onClick={() => removeSet(i)}>Remove set</button>
           </div>
           <CardEntriesEditor entries={set.entries} onChange={(entries) => updateSet(i, { entries })} />
@@ -189,6 +200,71 @@ function CardSetsEditor({ cardSets, onChange }: { cardSets: CardSet[]; onChange:
       ))}
       <button onClick={addSet}>+ Add card set</button>
     </Section>
+  );
+}
+
+/** A small draggable map of where each card set's stack appears when the room first
+ * starts — the "configure, visually, how the table should look on a new start" request.
+ * Coordinates map onto the same world-coordinate range engine/table.ts actually spawns
+ * things in (see LAYOUT_WORLD_WIDTH/HEIGHT below); a set that's never been dragged shows
+ * at the same auto-spread position the runtime would use for it (startingLayout.ts),
+ * so this preview and the real room always agree. */
+const LAYOUT_WORLD_WIDTH = 900;
+const LAYOUT_WORLD_HEIGHT = 640;
+
+function StartingLayoutPreview({ cardSets, onMove }: { cardSets: CardSet[]; onMove: (i: number, patch: Partial<CardSet>) => void }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dragging, setDragging] = useState<number | null>(null);
+
+  if (cardSets.length === 0) return null;
+
+  function positionOf(i: number): { x: number; y: number } {
+    const set = cardSets[i];
+    if (set.startX !== undefined && set.startY !== undefined) return { x: set.startX, y: set.startY };
+    return defaultCardSetPosition(i, cardSets.length);
+  }
+
+  function moveTo(i: number, clientX: number, clientY: number) {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const relX = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    const relY = Math.min(1, Math.max(0, (clientY - rect.top) / rect.height));
+    onMove(i, {
+      startX: Math.round(relX * LAYOUT_WORLD_WIDTH - LAYOUT_WORLD_WIDTH / 2),
+      startY: Math.round(relY * LAYOUT_WORLD_HEIGHT - LAYOUT_WORLD_HEIGHT / 2),
+    });
+  }
+
+  return (
+    <div>
+      <p class="hint">Drag a stack below to set where it appears when the room starts.</p>
+      <div
+        class="layout-preview"
+        ref={containerRef}
+        onPointerMove={(e) => dragging !== null && moveTo(dragging, e.clientX, e.clientY)}
+        onPointerUp={() => setDragging(null)}
+        onPointerLeave={() => setDragging(null)}
+      >
+        {cardSets.map((set, i) => {
+          const pos = positionOf(i);
+          const left = ((pos.x + LAYOUT_WORLD_WIDTH / 2) / LAYOUT_WORLD_WIDTH) * 100;
+          const top = ((pos.y + LAYOUT_WORLD_HEIGHT / 2) / LAYOUT_WORLD_HEIGHT) * 100;
+          return (
+            <div
+              key={set.key}
+              class="layout-preview-token"
+              style={{ left: `${left}%`, top: `${top}%` }}
+              onPointerDown={(e) => {
+                (e.target as HTMLElement).setPointerCapture(e.pointerId);
+                setDragging(i);
+              }}
+            >
+              {set.label || set.key}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -217,30 +293,36 @@ function CardEntriesEditor({ entries, onChange }: { entries: CardEntry[]; onChan
   }
 
   return (
-    <div class="entries">
-      {entries.map((entry, i) => (
-        <div class="entry-row" key={entry.id}>
-          {entry.front.image ? (
-            <img class="entry-thumb" src={entry.front.image} alt="" />
-          ) : (
-            <span class="entry-thumb entry-thumb-empty">text</span>
-          )}
-          <input
-            value={entry.front.title}
-            placeholder="title (or leave blank for image-only)"
-            onInput={(e) => update(i, { title: (e.target as HTMLInputElement).value })}
-          />
-          <input
-            value={entry.front.text ?? ""}
-            placeholder="body text (optional)"
-            onInput={(e) => update(i, { text: (e.target as HTMLInputElement).value })}
-          />
-          <input type="file" accept="image/*" onChange={(e) => uploadImage(i, (e.target as HTMLInputElement).files?.[0])} />
-          {entry.front.image && <button onClick={() => update(i, { image: undefined })}>Clear image</button>}
-          {busy === entry.id && <span class="hint">reading…</span>}
-          <button onClick={() => remove(i)}>Remove</button>
-        </div>
-      ))}
+    <div>
+      <div class="entry-grid">
+        {entries.map((entry, i) => (
+          <div class="entry-tile" key={entry.id}>
+            {entry.front.image ? (
+              <img class="entry-tile-preview" src={entry.front.image} alt="" />
+            ) : (
+              <div class="entry-tile-preview entry-tile-preview-empty" style={{ background: colorToCss(entry.front.color) }}>
+                {!entry.front.title && "text"}
+              </div>
+            )}
+            <input
+              value={entry.front.title}
+              placeholder="title (or blank for image-only)"
+              onInput={(e) => update(i, { title: (e.target as HTMLInputElement).value })}
+            />
+            <input
+              value={entry.front.text ?? ""}
+              placeholder="body text (optional)"
+              onInput={(e) => update(i, { text: (e.target as HTMLInputElement).value })}
+            />
+            <input type="file" accept="image/*" onChange={(e) => uploadImage(i, (e.target as HTMLInputElement).files?.[0])} />
+            {busy === entry.id && <span class="hint">reading…</span>}
+            <div class="entry-tile-actions">
+              {entry.front.image && <button onClick={() => update(i, { image: undefined })}>Clear img</button>}
+              <button onClick={() => remove(i)}>Remove</button>
+            </div>
+          </div>
+        ))}
+      </div>
       <button onClick={add}>+ Add card</button>
     </div>
   );
@@ -298,34 +380,38 @@ function PieceEntriesEditor({ entries, onChange }: { entries: PieceEntry[]; onCh
   }
 
   return (
-    <div class="entries">
-      {entries.map((entry, i) => (
-        <div class="entry-row" key={entry.id}>
-          {entry.image ? (
-            <img class="entry-thumb" src={entry.image} alt="" />
-          ) : (
-            <span class="entry-thumb entry-thumb-symbol">{entry.symbol}</span>
-          )}
-          <input
-            value={entry.symbol ?? ""}
-            placeholder="emoji or symbol, e.g. ⚔️"
-            maxLength={4}
-            onInput={(e) => update(i, { symbol: (e.target as HTMLInputElement).value || undefined, image: (e.target as HTMLInputElement).value ? undefined : entry.image })}
-          />
-          <input type="file" accept="image/*" onChange={(e) => uploadImage(i, (e.target as HTMLInputElement).files?.[0])} />
-          <input
-            value={entry.connectors?.join(",") ?? ""}
-            placeholder="connectors, e.g. north,south (optional)"
-            onInput={(e) => {
-              const v = (e.target as HTMLInputElement).value;
-              const connectors = v.split(",").map((s) => s.trim()).filter(Boolean);
-              update(i, { connectors: connectors.length ? connectors : undefined });
-            }}
-          />
-          {busy === entry.id && <span class="hint">reading…</span>}
-          <button onClick={() => remove(i)}>Remove</button>
-        </div>
-      ))}
+    <div>
+      <div class="entry-grid">
+        {entries.map((entry, i) => (
+          <div class="entry-tile" key={entry.id}>
+            {entry.image ? (
+              <img class="entry-tile-preview piece-preview" src={entry.image} alt="" />
+            ) : (
+              <div class="entry-tile-preview piece-preview entry-tile-preview-symbol">{entry.symbol}</div>
+            )}
+            <input
+              value={entry.symbol ?? ""}
+              placeholder="emoji/symbol, e.g. ⚔️"
+              maxLength={4}
+              onInput={(e) => update(i, { symbol: (e.target as HTMLInputElement).value || undefined, image: (e.target as HTMLInputElement).value ? undefined : entry.image })}
+            />
+            <input type="file" accept="image/*" onChange={(e) => uploadImage(i, (e.target as HTMLInputElement).files?.[0])} />
+            <input
+              value={entry.connectors?.join(",") ?? ""}
+              placeholder="connectors, e.g. north,south"
+              onInput={(e) => {
+                const v = (e.target as HTMLInputElement).value;
+                const connectors = v.split(",").map((s) => s.trim()).filter(Boolean);
+                update(i, { connectors: connectors.length ? connectors : undefined });
+              }}
+            />
+            {busy === entry.id && <span class="hint">reading…</span>}
+            <div class="entry-tile-actions">
+              <button onClick={() => remove(i)}>Remove</button>
+            </div>
+          </div>
+        ))}
+      </div>
       <button onClick={add}>+ Add piece</button>
     </div>
   );

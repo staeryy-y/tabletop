@@ -83,11 +83,36 @@ that touched this log.
     best-effort final upload fires on `pagehide` to shrink the staleness window. Still
     in-memory only server-side (per D14) — a full server *process* restart resets a room
     unless some peer's own browser still has it locally.
+- The main menu (`AdminDashboard.tsx`) is back to just rooms + users; the game-package
+  manager is its own page (`#/packages`, `GamePackages.tsx`), reached via a nav link.
+- Card sets spawn as one labeled, shufflable stack instead of N separate individual
+  piles (`TableModel.spawnStack`, a new `"spawn-stack"` sync-protocol request) — "a
+  stack of all the role cards," per the explicit Avalon example. `CardSet` gained
+  `label`/`startX`/`startY`; a set with no explicit position falls back to the same
+  auto-spread layout the runtime always used (`packages/startingLayout.ts`, shared
+  between the runtime and the editor's new preview below so they never disagree).
+- The game-package editor's card/piece lists are now a visual thumbnail grid
+  (`.entry-grid`/`.entry-tile`) — each card/piece shows its actual image, color, or
+  symbol up front, not just text in a row — plus a draggable "starting layout" preview
+  (`StartingLayoutPreview` in `GamePackageEditor.tsx`) for positioning each card set's
+  stack, addressing the explicit request to configure this "visually." Piece placement
+  isn't part of this preview yet, since pieces aren't spawned onto the table at all (see
+  the pre-existing, still-open gap below).
 
 ## Known gaps / open feedback
 
 Newest first. Fixed items move to "Implemented" above with a note here of what changed.
 
+- **(Fixed)** feedback1.md's batch: table-state persistence (see "Implemented" —
+  client-side IndexedDB, not server round trips), the dashboard heading-overflow bug,
+  the game-package manager splitting into its own `#/packages` page, card sets spawning
+  as one labeled stack instead of N individual piles, and the card/piece editor
+  switching from a plain list to a visual thumbnail grid (`.entry-grid`/`.entry-tile` in
+  style.css) with a draggable starting-layout preview for where each stack starts (see
+  "Implemented" for the last two). **Not done from that batch**: pixel-art theming for
+  the editor specifically beyond what the global CSS pass already gives it for free
+  (headings/buttons already pick up the bitmap font and blockier chrome — no
+  editor-specific pixel-art work was needed beyond the new tile-grid CSS above).
 - **(Fixed)** Rotate-hint: the rotate-handle gesture now sends the same kind of coarse,
   throttled live preview drag-hint already had (`net/syncProtocol.ts`'s "rotate-hint",
   mirroring "drag-hint" — both now share a `relayHint` helper on `HostTableSync`).
