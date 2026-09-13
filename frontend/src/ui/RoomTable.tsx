@@ -10,6 +10,7 @@ import { TableStore } from "../net/tableStore";
 import { createEmptyPackage, GamePackage } from "../packages/gamePackage";
 import { fetchBundledPackage } from "../packages/gameDefinitionLoader";
 import { PackageStore } from "../packages/packageStore";
+import { defaultCardSetPosition } from "../packages/startingLayout";
 import { loadRoomToken } from "../roomToken";
 import { getRememberedRoomPackageId } from "../roomPackageChoice";
 import { Chat } from "./Chat";
@@ -33,17 +34,33 @@ const DEMO_DECK: CardDef[] = ["A", "B", "C", "D", "E", "F"].map((letter, i) => (
 const FALLBACK_CARD_COLOR = 0x556070;
 const COLOR_SWATCHES = ["#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#42d4f4", "#f032e6", "#bfef45"];
 
-/** Card sets from a loaded package, flattened to engine/card.ts's CardDef shape. `color`
- * is always filled in even for an image-based face (engine/card.ts's CardFace.image doc
- * comment) — it's what shows during the brief window before the image itself decodes. */
-function cardDefsFromPackage(pkg: GamePackage): CardDef[] {
-  return pkg.cardSets.flatMap((set) =>
-    set.entries.map((entry) => ({
-      id: `${set.key}:${entry.id}`,
-      front: { title: entry.front.title, text: entry.front.text, color: entry.front.color ?? FALLBACK_CARD_COLOR, image: entry.front.image },
-      back: { title: set.back?.title ?? "", color: set.back?.color ?? 0x333333, image: set.back?.image },
-    })),
-  );
+/** One card set's worth of spawn info: what to show on each card (engine/card.ts's
+ * CardDef shape — `color` is always filled in even for an image-based face, since
+ * that's what shows during the brief window before the image itself decodes) and where
+ * its stack starts. Kept per-set (not flattened) so it can spawn as one stack
+ * (TableModel.spawnStack) rather than N separate piles — see CardSet.label/startX/startY's
+ * own doc comments in packages/gamePackage.ts. */
+interface CardSetSpawn {
+  label: string;
+  startX: number;
+  startY: number;
+  defs: CardDef[];
+}
+
+function cardSetSpawnsFromPackage(pkg: GamePackage): CardSetSpawn[] {
+  return pkg.cardSets.map((set, i) => {
+    const fallback = defaultCardSetPosition(i, pkg.cardSets.length);
+    return {
+      label: set.label ?? set.key,
+      startX: set.startX ?? fallback.x,
+      startY: set.startY ?? fallback.y,
+      defs: set.entries.map((entry) => ({
+        id: `${set.key}:${entry.id}`,
+        front: { title: entry.front.title, text: entry.front.text, color: entry.front.color ?? FALLBACK_CARD_COLOR, image: entry.front.image },
+        back: { title: set.back?.title ?? "", color: set.back?.color ?? 0x333333, image: set.back?.image },
+      })),
+    };
+  });
 }
 
 const packageStore = new PackageStore();
@@ -109,8 +126,13 @@ export function RoomTable({ slug }: { slug: string }) {
     function seedPackageIfHost(loaded: GamePackage): void {
       if (seededRef.current.pkg || !roomConnRef.current?.isHost) return;
       seededRef.current.pkg = true;
-      const cardDefs = cardDefsFromPackage(loaded);
-      cardDefs.forEach((def, i) => table.spawnCard(def, (i - (cardDefs.length - 1) / 2) * 70, -150));
+      // Each card set spawns as one already-stacked pile (e.g. "a stack of all the
+      // role cards" — not N separate individual piles), at the position the package
+      // author configured (or the same auto-spread default this project always used,
+      // if they never touched it — see startingLayout.ts).
+      for (const spawn of cardSetSpawnsFromPackage(loaded)) {
+        table.spawnStack(spawn.defs, spawn.startX, spawn.startY);
+      }
     }
 
     const conn = new SignalingConnection(slug, token.token);
@@ -311,7 +333,7 @@ export function RoomTable({ slug }: { slug: string }) {
     // can spawn for now — but the spawn itself is real: it goes through TableApp's
     // syncClient (net/roomConnection.ts) like every other action, so it reaches every
     // connected peer.
-    const deck = pkg ? cardDefsFromPackage(pkg) : [];
+    const deck = pkg ? cardSetSpawnsFromPackage(pkg).flatMap((s) => s.defs) : [];
     const pool = deck.length > 0 ? deck : DEMO_DECK;
     const def = pool[Math.floor(Math.random() * pool.length)];
     tableRef.current?.spawnCard(def, (Math.random() - 0.5) * 300, (Math.random() - 0.5) * 200);

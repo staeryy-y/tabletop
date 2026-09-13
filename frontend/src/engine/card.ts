@@ -14,7 +14,7 @@ export interface CardFace {
   text?: string;
   /** An uploaded image (data: URI — see packages/gamePackage.ts's CardFaceContent),
    * drawn in place of the color/title/text rendering below when present. `color` is
-   * still always carried alongside it (RoomTable.tsx's cardDefsFromPackage always
+   * still always carried alongside it (RoomTable.tsx's cardSetSpawnsFromPackage always
    * fills in a fallback) so there's something reasonable to show for the brief window
    * before the image finishes decoding. */
   image?: string;

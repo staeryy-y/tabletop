@@ -42,6 +42,18 @@ export class TableModel {
     return pile;
   }
 
+  /** Spawn several cards as one already-stacked pile — e.g. a game package's card set
+   * ("a stack of all the role cards" per GAME_DEFINITION.md-adjacent discussion)
+   * starting life as a single shufflable stack instead of N separate individual piles.
+   * `defs` order becomes bottom-to-top. A no-op-returning-undefined for an empty list —
+   * there's no such thing as a pile of zero cards (see PileState's own invariant). */
+  spawnStack(defs: CardDef[], x: number, y: number): PileState | undefined {
+    if (defs.length === 0) return undefined;
+    const pile: PileState = { id: this.newId(), x, y, rotation: 0, cards: defs.map((def) => ({ def, faceUp: false, hiddenBy: null })) };
+    this.piles.set(pile.id, pile);
+    return pile;
+  }
+
   getPile(id: string): PileState | undefined {
     return this.piles.get(id);
   }

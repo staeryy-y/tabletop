@@ -24,8 +24,19 @@ export interface CardEntry {
 
 export interface CardSet {
   key: string;
+  /** Shown on the table near the stack, and in the editor's stack list/layout preview
+   * — e.g. "Role Cards" for Avalon. Falls back to `key` wherever nothing else is set. */
+  label?: string;
   back?: CardFaceContent;
   entries: CardEntry[];
+  /** Where this set's stack appears when the room first starts, in the same world
+   * coordinates engine/table.ts spawns everything in — set by dragging it in the
+   * editor's starting-layout preview (GamePackageEditor.tsx). Undefined means "use the
+   * same auto-spread position the runtime always used" (see
+   * packages/startingLayout.ts), so existing packages authored before this field
+   * existed still lay out exactly as they always did. */
+  startX?: number;
+  startY?: number;
 }
 
 export interface PieceEntry {

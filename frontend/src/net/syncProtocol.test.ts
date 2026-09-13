@@ -91,6 +91,27 @@ describe("HostTableSync — spawn", () => {
   });
 });
 
+describe("HostTableSync — spawn-stack", () => {
+  it("broadcasts one pile holding every card to every recipient", () => {
+    const { sync, sent } = makeHost(["host", "alice"]);
+    sync.handleRequest("host", { type: "spawn-stack", defs: [DEF_A, DEF_B], x: 5, y: 6 });
+
+    expect(sent).toHaveLength(2);
+    for (const s of sent) {
+      expect(s.event).toMatchObject({ type: "pile-upserted", pile: { x: 5, y: 6 } });
+      if (s.event.type === "pile-upserted") expect(s.event.pile.cards).toHaveLength(2);
+    }
+  });
+
+  it("an empty defs list spawns nothing and broadcasts nothing", () => {
+    const { model, sync, sent } = makeHost(["host"]);
+    sync.handleRequest("host", { type: "spawn-stack", defs: [], x: 0, y: 0 });
+
+    expect(model.allPiles()).toHaveLength(0);
+    expect(sent).toHaveLength(0);
+  });
+});
+
 describe("HostTableSync — pick-up-and-drop", () => {
   it("placing (no merge) emits an upsert for the same pile id at the new position", () => {
     const { model, sync, sent } = makeHost(["host"]);
@@ -393,6 +414,12 @@ describe("PeerTableSync — sending requests to the host", () => {
     const { sync, requests } = makePeer();
     sync.spawn(DEF_A, 1, 2);
     expect(requests).toEqual([{ type: "spawn", def: DEF_A, x: 1, y: 2 }]);
+  });
+
+  it("spawnStack", () => {
+    const { sync, requests } = makePeer();
+    sync.spawnStack([DEF_A, DEF_B], 3, 4);
+    expect(requests).toEqual([{ type: "spawn-stack", defs: [DEF_A, DEF_B], x: 3, y: 4 }]);
   });
 
   it("pickUpAndDrop", () => {

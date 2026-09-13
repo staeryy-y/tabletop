@@ -310,6 +310,18 @@ export class TableApp implements TableView {
     }
   }
 
+  /** Same idea as spawnCard, for a whole already-stacked pile at once (TableModel's
+   * spawnStack — see its own doc comment) — a game package's card set appearing as one
+   * shufflable stack instead of N separate piles. */
+  spawnStack(defs: CardDef[], worldX: number, worldY: number): void {
+    if (this.syncClient) {
+      this.syncClient.sendRequest({ type: "spawn-stack", defs, x: worldX, y: worldY });
+    } else {
+      const pile = this.model.spawnStack(defs, worldX, worldY);
+      if (pile) this.mountView(pile);
+    }
+  }
+
   // --- Wiring a PileState to an on-screen Container. The view is purely a rendering
   // of whatever the model says; every handler below reads/writes the model first and
   // re-renders after, never the other way around. ---

@@ -37,6 +37,57 @@ describe("spawnCard", () => {
   });
 });
 
+describe("spawnStack", () => {
+  it("creates one pile holding every card, bottom-to-top in the given order", () => {
+    const model = new TableModel();
+    const pile = model.spawnStack([DEF_A, DEF_B, DEF_C], 10, 20);
+
+    expect(pile).toBeDefined();
+    expect(pile!.cards.map((c) => c.def)).toEqual([DEF_A, DEF_B, DEF_C]);
+    expect(pile!.cards.every((c) => c.faceUp === false && c.hiddenBy === null)).toBe(true);
+    expect(pile!.x).toBe(10);
+    expect(pile!.y).toBe(20);
+  });
+
+  it("is a single pile, not one per card", () => {
+    const model = new TableModel();
+    model.spawnStack([DEF_A, DEF_B, DEF_C], 0, 0);
+    expect(model.allPiles()).toHaveLength(1);
+  });
+
+  it("a one-card stack behaves the same as spawnCard", () => {
+    const model = new TableModel();
+    const pile = model.spawnStack([DEF_A], 0, 0);
+    expect(pile!.cards).toEqual([{ def: DEF_A, faceUp: false, hiddenBy: null }]);
+  });
+
+  it("an empty list spawns nothing and returns undefined", () => {
+    const model = new TableModel();
+    expect(model.spawnStack([], 0, 0)).toBeUndefined();
+    expect(model.allPiles()).toHaveLength(0);
+  });
+
+  it("gives every spawned stack a distinct id, and doesn't collide with spawnCard's ids", () => {
+    const model = new TableModel();
+    const ids = new Set<string>();
+    ids.add(model.spawnCard(DEF_A, 0, 0).id);
+    ids.add(model.spawnStack([DEF_B, DEF_C], 0, 0)!.id);
+    ids.add(model.spawnStack([DEF_A], 0, 0)!.id);
+    expect(ids.size).toBe(3);
+  });
+
+  it("the resulting pile is shuffle-able and drag/flip/hide-able like any other pile", () => {
+    const model = new TableModel();
+    const pile = model.spawnStack([DEF_A, DEF_B, DEF_C], 0, 0)!;
+
+    model.flip(pile.id);
+    expect(model.topCard(pile.id)!.faceUp).toBe(true);
+
+    model.toggleHide(pile.id, "alice");
+    expect(model.topCard(pile.id)!.hiddenBy).toBe("alice");
+  });
+});
+
 describe("pickUpTop", () => {
   it("returns undefined for a pile that doesn't exist", () => {
     const model = new TableModel();

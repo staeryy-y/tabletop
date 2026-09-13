@@ -22,6 +22,10 @@ import { CardInstance, PileState, TableModel } from "../engine/pileModel";
 
 export type TableRequest =
   | { type: "spawn"; def: CardDef; x: number; y: number }
+  /** Spawns several cards as one already-stacked pile (TableModel.spawnStack) — e.g. a
+   * game package's whole card set appearing as a single shufflable stack, not N
+   * separate piles, when a room starts. */
+  | { type: "spawn-stack"; defs: CardDef[]; x: number; y: number }
   | { type: "pick-up-and-drop"; pileId: string; x: number; y: number; mergeRadius: number }
   | { type: "flip"; pileId: string }
   | { type: "toggle-hide"; pileId: string }
@@ -101,6 +105,11 @@ export class HostTableSync {
       case "spawn": {
         const pile = this.model.spawnCard(req.def, req.x, req.y);
         touched.add(pile.id);
+        break;
+      }
+      case "spawn-stack": {
+        const pile = this.model.spawnStack(req.defs, req.x, req.y);
+        if (pile) touched.add(pile.id);
         break;
       }
       case "pick-up-and-drop": {
@@ -202,6 +211,9 @@ export class PeerTableSync {
 
   spawn(def: CardDef, x: number, y: number): void {
     this.sendToHost({ type: "spawn", def, x, y });
+  }
+  spawnStack(defs: CardDef[], x: number, y: number): void {
+    this.sendToHost({ type: "spawn-stack", defs, x, y });
   }
   pickUpAndDrop(pileId: string, x: number, y: number, mergeRadius: number): void {
     this.sendToHost({ type: "pick-up-and-drop", pileId, x, y, mergeRadius });
