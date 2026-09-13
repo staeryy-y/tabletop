@@ -30,17 +30,15 @@ const DEMO_DECK: CardDef[] = ["A", "B", "C", "D", "E", "F"].map((letter, i) => (
 const FALLBACK_CARD_COLOR = 0x556070;
 const COLOR_SWATCHES = ["#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#42d4f4", "#f032e6", "#bfef45"];
 
-/** Card sets from a loaded package, flattened to engine/card.ts's CardDef shape.
- * Note: an image front (a card built with an uploaded image in the editor) doesn't
- * render as an actual picture yet — the PixiJS renderer only draws color/text faces so
- * far (see engine/card.ts) — it falls back to a plain color so it's still visible and
- * playable rather than crashing; real image rendering on the canvas is a follow-up. */
+/** Card sets from a loaded package, flattened to engine/card.ts's CardDef shape. `color`
+ * is always filled in even for an image-based face (engine/card.ts's CardFace.image doc
+ * comment) — it's what shows during the brief window before the image itself decodes. */
 function cardDefsFromPackage(pkg: GamePackage): CardDef[] {
   return pkg.cardSets.flatMap((set) =>
     set.entries.map((entry) => ({
       id: `${set.key}:${entry.id}`,
-      front: { title: entry.front.title, text: entry.front.text, color: entry.front.color ?? FALLBACK_CARD_COLOR },
-      back: { title: set.back?.title ?? "", color: set.back?.color ?? 0x333333 },
+      front: { title: entry.front.title, text: entry.front.text, color: entry.front.color ?? FALLBACK_CARD_COLOR, image: entry.front.image },
+      back: { title: set.back?.title ?? "", color: set.back?.color ?? 0x333333, image: set.back?.image },
     })),
   );
 }

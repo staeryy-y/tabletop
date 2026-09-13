@@ -86,13 +86,24 @@ Newest first. Fixed items move to "Implemented" above with a note here of what c
 - **(Fixed)** Host reload/close no longer resets table state; UI visual design,
   eyes-closed's effect, and chat sync — see "Implemented" above for what actually landed
   for each.
-- **(Not started) Card images don't render on the canvas.** An image-based card front
-  (built in the package editor) falls back to a plain color in PixiJS — see
-  `card.ts`/`RoomTable.tsx`'s `cardDefsFromPackage` doc comments. Flagged repeatedly,
-  not yet picked up.
+- **(Fixed)** Card images now render on the canvas. `engine/card.ts`'s `drawFace` shows
+  the existing color/title fallback immediately, then swaps in the decoded image (a
+  `Sprite`, masked to the same rounded-rect shape as a color card, title/text suppressed
+  since real art already carries its own) once it's loaded — cached by data URI so a
+  card set reusing one image (e.g. a shared back) or a redrawn pile doesn't redecode it.
+  Guards against a slow-loading image applying itself to a container that's since moved
+  on to a different card (a flip, a merge) via a per-container render-token check.
+  `RoomTable.tsx`'s `cardDefsFromPackage` was also silently dropping `entry.front.image`/
+  `set.back?.image` entirely before this — now threads them through.
 - **(Not started) Pixel-art visual theme.** Explicit early request ("don't forget the
   pixel art theme" x2), still purely aspirational — see D12 in DECISIONS.md for the
   design decision, no implementation.
+- **(Not started, newly noticed while fixing card images) Pieces are never spawned or
+  rendered on the table at all.** `PieceSet`/`PieceEntry` exist in the package data model
+  and editor (`GamePackageEditor.tsx`), but nothing in `table.ts`/`RoomTable.tsx` ever
+  turns one into an on-table object the way `cardDefsFromPackage`/`spawnCard` do for
+  cards — nothing to spawn, place, or render, image or otherwise. A real gap for any
+  game whose board is pieces rather than cards (tiles, tokens, a Betrayal-style board).
 
 ## Explicitly out of scope for v1 (see PLAN.md, unchanged)
 
