@@ -98,10 +98,29 @@ that touched this log.
   stack, addressing the explicit request to configure this "visually." Piece placement
   isn't part of this preview yet, since pieces aren't spawned onto the table at all (see
   the pre-existing, still-open gap below).
+- Room deletion (`DELETE /api/rooms/{slug}`, admin-only + ownership-checked, dashboard
+  gets a "Delete" button per room).
+- Anonymous rooms (D19): `#/new` (linked from the login page) creates a room with no
+  account at all, via a new public `POST /api/rooms/anonymous` — held entirely in
+  `app/rooms.py`'s in-memory `_anonymous_rooms`, never a SQLite row. Such a room has no
+  GM ever (there's no account to attest one from — `is_gm` is explicitly guarded
+  against `owner_user_id is None` so a not-logged-in guest can't accidentally read as
+  GM), so D13's host-follows-GM re-election never triggers; whoever joins first just
+  stays host. Its client never uploads a recovery snapshot to the server at all
+  (`roomInfo.isAnonymous`) — moot anyway, since `app/signaling.py`'s
+  `_handle_disconnect` now discards an anonymous room's entire in-memory state (and its
+  `_anonymous_rooms` entry) the instant it goes empty, rather than keeping it the way
+  an accounted room's snapshot is kept. A custom game package still works identically —
+  it was always client-side, regardless of who owns the room.
 
 ## Known gaps / open feedback
 
 Newest first. Fixed items move to "Implemented" above with a note here of what changed.
+
+- **(Fixed)** Room deletion (`DELETE /api/rooms/{slug}`, admin-only + ownership-checked)
+  and anonymous rooms (D19) — see "Implemented" above for the latter's actual shape
+  (no account needed, genuinely zero server footprint, not just "an account-less
+  version of the same thing").
 
 - **(Fixed)** Client cursors are now always visible, not just mid-drag — a new
   "cursor-hint" (`net/syncProtocol.ts`, alongside drag-hint/rotate-hint: cosmetic,

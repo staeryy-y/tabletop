@@ -99,10 +99,21 @@ export const rooms = {
       password: password || null,
       ...(gameDefRef ? { game_def_ref: gameDefRef } : {}),
     }),
+  /** No account needed at all (docs/DECISIONS.md D19) — anyone can host a game. The
+   * server never persists this room anywhere; see app/rooms.py's own docstring. */
+  createAnonymous: (name: string, password: string | null, gameDefRef?: string) =>
+    request<{ slug: string }>("POST", "/api/rooms/anonymous", {
+      name,
+      password: password || null,
+      ...(gameDefRef ? { game_def_ref: gameDefRef } : {}),
+    }),
   get: (slug: string) => request<RoomPublicInfo>("GET", `/api/rooms/${slug}`),
   join: (slug: string, displayName: string, password?: string) =>
     request<JoinResult>("POST", `/api/rooms/${slug}/join`, {
       display_name: displayName,
       password: password || null,
     }),
+  /** Accounted rooms only — an anonymous room has no dashboard listing to delete it
+   * from and already discards itself the moment it's empty. */
+  delete: (slug: string) => request<void>("DELETE", `/api/rooms/${slug}`),
 };

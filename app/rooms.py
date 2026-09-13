@@ -1,14 +1,25 @@
 """Room CRUD, the join flow, and guest tokens.
 
-Rooms need an account only to *create* (admin-only); joining is a display name plus the
-room's own optional password — no account. See docs/ARCHITECTURE.md "Room lifecycle" and
-docs/DECISIONS.md D5.
+Two room kinds, per docs/DECISIONS.md D19:
+- **Accounted rooms** need an admin account to *create* (joining is still just a
+  display name plus the room's own optional password — no account needed there
+  either). Persisted in SQLite, listed on the dashboard, deletable.
+- **Anonymous rooms** need no account at all, for either the creator or anyone
+  joining. Held entirely in memory (`_anonymous_rooms` below) — never a SQLite row,
+  never listed anywhere, and cleaned up the moment they go empty
+  (app/signaling.py's _handle_disconnect) — so the server's persistent footprint is
+  exactly the same with or without anonymous rooms ever having existed. Their
+  `game_def_ref` is `"custom"` or a bundled name, same as an accounted room; the
+  difference is purely about the *server's* bookkeeping, not the game itself.
+
+See docs/ARCHITECTURE.md "Room lifecycle" and docs/DECISIONS.md D5/D19.
 """
 from __future__ import annotations
 
 import re
 import secrets
 import sqlite3
+from dataclasses import dataclass
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -54,10 +65,55 @@ class JoinRoomBody(BaseModel):
     password: Optional[str] = None
 
 
+@dataclass
+class AnonymousRoom:
+    slug: str
+    name: str
+    game_def_ref: str
+    password_hash: Optional[str]
+    created_at: str
+
+
+# Purely in-memory, process-lifetime only — see this module's own docstring (D19) for
+# why anonymous rooms never touch SQLite. Cleaned up by
+# app/signaling.py's _handle_disconnect the moment a room goes empty, the same way
+# app.signaling's own `_rooms` dict already holds nothing durable.
+_anonymous_rooms: dict[str, AnonymousRoom] = {}
+
+
 def get_room_by_slug(slug: str) -> Optional[dict]:
+    """Returns the same dict shape regardless of which kind of room this is, so
+    callers (join_room below, app/signaling.py's room_socket) don't need to care —
+    `owner_user_id` is simply always None for an anonymous room (there's no account to
+    own it), and `is_anonymous` is there for the one place that *does* need to know:
+    telling the client, via `roomInfo`, not to bother uploading a recovery snapshot to
+    a server that was never going to persist it anyway (see D19)."""
     with connection() as conn:
         row = conn.execute("SELECT * FROM rooms WHERE slug = ?", (slug,)).fetchone()
-    return dict(row) if row else None
+    if row is not None:
+        return {**dict(row), "is_anonymous": False}
+
+    anon = _anonymous_rooms.get(slug)
+    if anon is None:
+        return None
+    return {
+        "slug": anon.slug,
+        "name": anon.name,
+        "owner_user_id": None,
+        "game_def_ref": anon.game_def_ref,
+        "password_hash": anon.password_hash,
+        "created_at": anon.created_at,
+        "is_anonymous": True,
+    }
+
+
+def delete_anonymous_room(slug: str) -> None:
+    """Called once a room goes empty (app/signaling.py's _handle_disconnect) — an
+    anonymous room that nobody's connected to isn't reachable by anyone who didn't
+    already have the link memorized, so there's nothing lost by discarding it
+    immediately rather than keeping it around "just in case." A no-op if `slug` isn't
+    (or is no longer) an anonymous room, so callers don't need to check first."""
+    _anonymous_rooms.pop(slug, None)
 
 
 MAX_SLUG_COLLISION_RETRIES = 5
@@ -90,6 +146,29 @@ def create_room(body: CreateRoomBody, user: dict = Depends(auth.require_admin)):
             continue
 
 
+@router.post("/api/rooms/anonymous", status_code=status.HTTP_201_CREATED)
+def create_anonymous_room(body: CreateRoomBody):
+    """No `Depends(auth.require_admin)` — this is the whole point (D19): anyone can
+    host a game without an account. See this module's docstring for what "anonymous"
+    actually means here (no SQLite row, ever)."""
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "name required")
+    password_hash = hash_password(body.password) if body.password else None
+
+    for _ in range(MAX_SLUG_COLLISION_RETRIES):
+        slug = new_slug()
+        # Checked against both namespaces (accounted rooms too) so an anonymous room
+        # can never shadow/collide with either kind, even though each is vanishingly
+        # unlikely on its own.
+        if slug not in _anonymous_rooms and get_room_by_slug(slug) is None:
+            _anonymous_rooms[slug] = AnonymousRoom(
+                slug=slug, name=name, game_def_ref=body.game_def_ref, password_hash=password_hash, created_at=now_iso()
+            )
+            return {"slug": slug}
+    raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "failed to allocate a room slug")
+
+
 @router.get("/api/rooms")
 def list_my_rooms(user: dict = Depends(auth.require_admin)):
     with connection() as conn:
@@ -108,6 +187,20 @@ def list_my_rooms(user: dict = Depends(auth.require_admin)):
         }
         for r in rows
     ]
+
+
+@router.delete("/api/rooms/{slug}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_room(slug: str, user: dict = Depends(auth.require_admin)):
+    """Accounted rooms only — an anonymous room has no dashboard listing to delete it
+    from in the first place, and already self-deletes the moment it goes empty (see
+    delete_anonymous_room)."""
+    with connection() as conn:
+        row = conn.execute("SELECT owner_user_id FROM rooms WHERE slug = ?", (slug,)).fetchone()
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "room not found")
+        if row["owner_user_id"] != user["id"]:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "not your room")
+        conn.execute("DELETE FROM rooms WHERE slug = ?", (slug,))
 
 
 @router.get("/api/rooms/{slug}")

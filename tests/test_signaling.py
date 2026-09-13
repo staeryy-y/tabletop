@@ -334,6 +334,30 @@ def test_disconnect_of_the_last_peer_clears_host_but_keeps_the_snapshot():
     assert state.snapshot == {"table": "state"}
 
 
+def test_disconnect_of_the_last_peer_in_an_anonymous_room_discards_it_completely():
+    # D19: the opposite of the accounted-room case above — an anonymous room has no
+    # server-side recovery to preserve in the first place (its client never uploads a
+    # snapshot at all) and no dashboard listing anyone could use to find it again, so
+    # an empty one is discarded outright rather than kept around.
+    import app.rooms as rooms_module
+
+    slug = "anon-room-under-test"
+    rooms_module._anonymous_rooms[slug] = rooms_module.AnonymousRoom(
+        slug=slug, name="Pickup", game_def_ref="bundled:generic-freeform", password_hash=None, created_at="now"
+    )
+    state = RoomState(slug=slug, is_anonymous=True)
+    host = make_peer("host")
+    state.peers = {"host": host}
+    state.host_peer_id = "host"
+    state.snapshot = {"table": "state"}  # shouldn't matter either way — it's discarded
+    signaling._rooms[slug] = state
+
+    asyncio.run(signaling._handle_disconnect(state, "host"))
+
+    assert slug not in rooms_module._anonymous_rooms
+    assert slug not in signaling._rooms
+
+
 def test_rejoining_an_emptied_room_resumes_from_the_kept_snapshot():
     state = RoomState()
     host = make_peer("host")
@@ -590,3 +614,61 @@ def test_ws_reloading_as_the_sole_player_resumes_from_the_last_snapshot_instead_
         assert welcome["hostPeerId"] == welcome["peerId"]
         resumed = ws2.receive_json()
         assert resumed == {"type": "you-are-host", "snapshot": {"cards": ["a", "b"]}}
+
+
+# --- Anonymous rooms (docs/DECISIONS.md D19) ---
+
+
+def test_ws_anonymous_room_has_no_gm_ever(client):
+    slug = client.post("/api/rooms/anonymous", json={"name": "Pickup"}).json()["slug"]
+    join = _join(client, slug, "Alice")
+
+    with client.websocket_connect(f"/ws/room/{slug}?token={join['token']}") as ws:
+        welcome = ws.receive_json()
+        assert welcome["gmPeerId"] is None
+        assert welcome["hostPeerId"] == welcome["peerId"]  # still becomes host, just never GM
+        assert welcome["roomInfo"]["isAnonymous"] is True
+        assert ws.receive_json() == {"type": "you-are-host", "snapshot": None}
+
+
+def test_ws_accounted_room_roominfo_says_not_anonymous(admin_client):
+    slug = admin_client.post("/api/rooms", json={"name": "R"}).json()["slug"]
+    join = _join(admin_client, slug, "Alice")
+
+    with admin_client.websocket_connect(f"/ws/room/{slug}?token={join['token']}") as ws:
+        welcome = ws.receive_json()
+        assert welcome["roomInfo"]["isAnonymous"] is False
+        ws.receive_json()  # you-are-host
+
+
+def test_ws_anonymous_room_second_joiner_never_displaces_the_first_host(client, second_client):
+    # Without a GM, D13's "the GM always takes over" re-election never triggers — a
+    # later joiner in an anonymous room is just an ordinary peer, always.
+    slug = client.post("/api/rooms/anonymous", json={"name": "Pickup"}).json()["slug"]
+    join1 = _join(client, slug, "Alice")
+    join2 = _join(second_client, slug, "Bob")
+
+    with client.websocket_connect(f"/ws/room/{slug}?token={join1['token']}") as ws1:
+        welcome1 = ws1.receive_json()
+        ws1.receive_json()  # you-are-host
+
+        with second_client.websocket_connect(f"/ws/room/{slug}?token={join2['token']}") as ws2:
+            welcome2 = ws2.receive_json()
+            assert welcome2["hostPeerId"] == welcome1["peerId"]
+
+            joined = ws1.receive_json()
+            assert joined["type"] == "peer-joined"  # no host-changed follows it
+
+
+def test_ws_anonymous_room_is_gone_once_everyone_leaves(client):
+    slug = client.post("/api/rooms/anonymous", json={"name": "Pickup"}).json()["slug"]
+    join = _join(client, slug, "Alice")
+
+    with client.websocket_connect(f"/ws/room/{slug}?token={join['token']}") as ws:
+        ws.receive_json()  # welcome
+        ws.receive_json()  # you-are-host
+
+    # A fresh join attempt against the same (now-abandoned) slug 404s — the room and
+    # everything about it is completely gone, not just temporarily hostless.
+    r = client.post(f"/api/rooms/{slug}/join", json={"display_name": "Bob"})
+    assert r.status_code == 404

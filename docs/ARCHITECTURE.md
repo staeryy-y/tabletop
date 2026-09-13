@@ -103,6 +103,13 @@ host, not the other way around. Any connected player can already freely manipula
 whatever's there — move/rotate/flip/hide any Card, slide any Track, roll any die (see
 NETWORKING.md "Trust model") — but only the GM can:
 
+(All of the above describes an **accounted** room. An **anonymous** one, per D19, has
+no owning account at all, so it has no GM, ever — whoever's currently host is simply
+whoever joined first, or the next-oldest connected peer if that person leaves; nobody
+gets spawn/despawn/peek authority beyond what any player already has. The room still
+works the same otherwise — Card/Track/Zone manipulation was never gated to the GM in
+the first place.)
+
 - **Spawn** a new Card/Piece/Token/Die onto the table at will — pull a blank card, drop
   in an extra monster token, add a die type mid-session — without going through a draw
   pile. This is the digital equivalent of a GM reaching into the box for something not
@@ -276,10 +283,14 @@ which is discarded once the room has been empty for a while.
 
 ## Room lifecycle
 
-1. Admin logs in, creates a room: name, optional password, and a game package — either
-   picks one of the bundled examples, or picks a package file from their own computer
-   (in which case only their browser ever holds its rules/assets; the server just
-   records `game_def_ref = "custom"`) → gets `/room/{slug}`.
+1. Someone creates a room: name, optional password, and a game package — either picks
+   one of the bundled examples, or picks a package file from their own computer (in
+   which case only their browser ever holds its rules/assets; the server just records
+   `game_def_ref = "custom"`) → gets `/room/{slug}`. Either an admin does this, logged
+   in, and the room is persisted and owned by their account (listed on the dashboard,
+   deletable); or, per D19, anyone does this with no account at all (`#/new`) and the
+   room lives only in the server's memory for as long as someone's connected to it —
+   see "Roles" below for how that changes GM/host election.
 2. Admin (or anyone with the link) opens `/room/{slug}`, enters a display name (+ room
    password if set) → server issues a short-lived, room-scoped guest token and opens a
    signaling WebSocket.

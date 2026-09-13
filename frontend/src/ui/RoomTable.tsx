@@ -82,6 +82,9 @@ export function RoomTable({ slug }: { slug: string }) {
   // events (host-changed) know whether a package transfer is even relevant — only a
   // "custom" room's package needs P2P transfer at all (see packageDistributorRef).
   const gameDefRefRef = useRef<string | null>(null);
+  // D19: an anonymous room's server-side state is never persisted at all, so uploading
+  // a recovery snapshot to it would just be wasted traffic — see persistSnapshotIfHost.
+  const isAnonymousRoomRef = useRef(false);
   const packageDistributorRef = useRef<PackageDistributor | null>(null);
   const chatDistributorRef = useRef<ChatDistributor | null>(null);
   const [peers, setPeers] = useState<Map<string, Peer>>(new Map());
@@ -150,7 +153,12 @@ export function RoomTable({ slug }: { slug: string }) {
     function persistSnapshotIfHost(): void {
       if (!roomConnRef.current?.isHost) return;
       const piles = roomConnRef.current.currentSnapshot();
-      conn.send({ type: "snapshot", blob: piles });
+      // The server-side upload only matters for a *different* peer being promoted to
+      // host later — an anonymous room's server state is never persisted at all
+      // (D19), so there'd be nothing for that upload to accomplish. The local
+      // IndexedDB save below always happens regardless — that's not a "server
+      // upload," it's this browser remembering its own table.
+      if (!isAnonymousRoomRef.current) conn.send({ type: "snapshot", blob: piles });
       void tableStore.save(slug, piles);
     }
     const snapshotInterval = setInterval(persistSnapshotIfHost, SNAPSHOT_PERSIST_INTERVAL_MS);
@@ -188,6 +196,7 @@ export function RoomTable({ slug }: { slug: string }) {
         // that actually carries the resume snapshot.
         const roomConn = new RoomConnection(table.getModel(), table, conn, event.peerId);
         roomConnRef.current = roomConn;
+        isAnonymousRoomRef.current = event.roomInfo.isAnonymous;
 
         // A custom package's actual content only ever exists in whichever browser(s)
         // hold it — the server never stores it (docs/DECISIONS.md D14) — so any peer

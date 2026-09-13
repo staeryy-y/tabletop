@@ -288,3 +288,37 @@ still in-memory only (see D14) — a full server *process* restart still starts 
 fresh unless some peer's own browser still has it locally, which is an accepted
 consequence of not persisting a game's actual state to the server (D14's real
 concern), not an oversight this decision reopens.
+
+## D19 — Anonymous rooms: no account needed, and genuinely zero server footprint
+
+Accounts were originally required to create a room at all (D5's two-tier identity:
+accounts for admins, ephemeral guest tokens for everyone else). Requested explicitly:
+an account should no longer be *necessary* — anyone should be able to host a game with
+no sign-up, the same way joining one already needs nothing but a display name — while
+keeping the account system itself for whoever wants persistent rooms, user management,
+or a saved room list on a dashboard.
+
+The two kinds of room this creates are deliberately asymmetric, not just "anonymous
+rooms have a blank owner field":
+
+- An **accounted** room is a SQLite row (`owner_user_id` set), listed on the dashboard,
+  deletable (`DELETE /api/rooms/{slug}`, new alongside this), and its GM is
+  server-attested from that row exactly as D13 already describes.
+- An **anonymous** room (`POST /api/rooms/anonymous`, no auth) is held entirely in
+  `app/rooms.py`'s own in-memory `_anonymous_rooms` dict — never a SQLite row, at any
+  point in its life. It has no GM at all (there's no account to attest one from —
+  `room["owner_user_id"]` is simply `None`, guarded explicitly in
+  app/signaling.py's `is_gm` computation so `None == None` can't silently make every
+  not-logged-in guest "the GM" of a room nobody owns), so D13's host-follows-GM
+  re-election never triggers for one — whoever joins first just stays host,
+  `pick_next_host` picking the next-oldest if they leave, same as any room would work
+  pre-D13. Its client also never uploads a recovery snapshot to the signaling server at
+  all (`roomInfo.isAnonymous`, checked in `persistSnapshotIfHost`) — pointless, since
+  app/signaling.py's `_handle_disconnect` discards the room's entire in-memory
+  `RoomState` *and* its `_anonymous_rooms` entry the instant it goes empty, rather than
+  keeping either the way an accounted room's snapshot is kept (see D18). This is the
+  literal request: "no server uploads, no data scaling" — creating and abandoning any
+  number of anonymous rooms leaves the server's persistent and in-memory footprint
+  exactly as it would have been if none of them had ever existed. A custom game package
+  still works the same for an anonymous room as an accounted one — it was always
+  client-side/IndexedDB, never server-held, regardless of who owns the room (D14).

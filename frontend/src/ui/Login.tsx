@@ -43,6 +43,9 @@ export function Login({ onLoggedIn }: { onLoggedIn: (me: Me) => void }) {
           {busy ? "Logging in…" : "Log in"}
         </button>
         <p class="hint">First run? Log in with admin / admin — you'll be asked to change it.</p>
+        <p class="hint">
+          Just want to play? <a href="#/new">Start a game without an account</a>
+        </p>
       </form>
     </div>
   );

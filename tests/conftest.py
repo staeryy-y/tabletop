@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import app.db as db  # noqa: E402
 import app.auth as auth  # noqa: E402
+import app.rooms as rooms  # noqa: E402
 import app.signaling as signaling  # noqa: E402
 
 
@@ -44,6 +45,9 @@ def _app(tmp_path, monkeypatch):
     # re-runs its module body once), so without this reset, room state from one test
     # could leak into the next if slugs ever collided.
     monkeypatch.setattr(signaling, "_rooms", {})
+    # Anonymous rooms (docs/DECISIONS.md D19) are the same kind of process-global,
+    # in-memory registry, for the same reason — reset it per test too.
+    monkeypatch.setattr(rooms, "_anonymous_rooms", {})
 
     from app.main import app as fastapi_app  # imported lazily so the patched paths above are in effect
 

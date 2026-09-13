@@ -6,12 +6,14 @@ import { Login } from "./ui/Login";
 import { AccountSetup } from "./ui/AccountSetup";
 import { AdminDashboard } from "./ui/AdminDashboard";
 import { GamePackages } from "./ui/GamePackages";
+import { NewAnonymousRoom } from "./ui/NewAnonymousRoom";
 import { RoomJoin } from "./ui/RoomJoin";
 import { RoomTable } from "./ui/RoomTable";
 
 type Route =
   | { view: "dashboard" }
   | { view: "packages" }
+  | { view: "new" }
   | { view: "join"; slug: string }
   | { view: "room"; slug: string };
 
@@ -21,6 +23,7 @@ function parseHash(): Route {
   if (kind === "join" && slug) return { view: "join", slug };
   if (kind === "room" && slug) return { view: "room", slug };
   if (kind === "packages") return { view: "packages" };
+  if (kind === "new") return { view: "new" };
   return { view: "dashboard" };
 }
 
@@ -49,9 +52,11 @@ function App() {
   }, []);
 
   // Guest routes (join/room) never require an admin session — a room is joinable by
-  // display name alone. Only the dashboard needs one.
+  // display name alone. Neither does creating an anonymous one (D19) — only the
+  // dashboard and package manager need an account.
   if (route.view === "join") return <RoomJoin slug={route.slug} />;
   if (route.view === "room") return <RoomTable slug={route.slug} />;
+  if (route.view === "new") return <NewAnonymousRoom />;
 
   if (me === undefined) return <div class="centered-page">Loading…</div>;
   if (me === null) return <Login onLoggedIn={setMe} />;

@@ -8,6 +8,10 @@ export interface RoomInfo {
   slug: string;
   name: string;
   gameDefRef: string;
+  /** True for a room created without an account (docs/DECISIONS.md D19) — its
+   * server-side state is never persisted, so the client shouldn't bother uploading a
+   * recovery snapshot at all (see ui/RoomTable.tsx's persistSnapshotIfHost). */
+  isAnonymous: boolean;
 }
 
 export interface Peer {

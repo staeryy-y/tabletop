@@ -182,6 +182,21 @@ button:disabled {
   color: var(--accent);
 }
 
+.room-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.room-delete-button {
+  margin-left: auto;
+  font-size: 0.55rem;
+  padding: 5px 8px;
+  background: #6b2a2a;
+  color: var(--text);
+}
+
 .dashboard form {
   display: flex;
   flex-wrap: wrap;

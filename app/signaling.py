@@ -17,7 +17,7 @@ from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from app.rooms import get_room_by_slug, verify_guest_token
+from app.rooms import delete_anonymous_room, get_room_by_slug, verify_guest_token
 
 router = APIRouter()
 
@@ -50,6 +50,11 @@ class RoomState:
     peers: dict[str, Peer] = field(default_factory=dict)
     host_peer_id: Optional[str] = None
     snapshot: Optional[dict] = None
+    # Both "" / False in every unit test below that builds a bare RoomState() directly
+    # without going through _room_state — those never exercise the cleanup that needs
+    # them (see _handle_disconnect's is_anonymous branch).
+    slug: str = ""
+    is_anonymous: bool = False
 
     def pick_next_host(self, exclude: str) -> Optional[str]:
         candidates = [p for pid, p in self.peers.items() if pid != exclude]
@@ -82,8 +87,10 @@ class RoomState:
 _rooms: dict[str, RoomState] = {}
 
 
-def _room_state(slug: str) -> RoomState:
-    return _rooms.setdefault(slug, RoomState())
+def _room_state(slug: str, is_anonymous: bool) -> RoomState:
+    if slug not in _rooms:
+        _rooms[slug] = RoomState(slug=slug, is_anonymous=is_anonymous)
+    return _rooms[slug]
 
 
 def _session_user_id(websocket: WebSocket) -> Optional[int]:
@@ -125,9 +132,12 @@ async def room_socket(websocket: WebSocket, slug: str, token: str) -> None:
 
     await websocket.accept()
 
-    state = _room_state(slug)
+    state = _room_state(slug, room["is_anonymous"])
     peer_id = guest["guestId"]
-    is_gm = _session_user_id(websocket) == room["owner_user_id"]
+    # room["owner_user_id"] is None for an anonymous room (no account owns it) — guard
+    # explicitly rather than let `None == None` silently make every not-logged-in guest
+    # "the GM" of a room nobody actually owns.
+    is_gm = room["owner_user_id"] is not None and _session_user_id(websocket) == room["owner_user_id"]
     peer = Peer(peer_id=peer_id, name=guest["displayName"], is_gm=is_gm, ws=websocket)
     state.peers[peer_id] = peer
 
@@ -140,7 +150,16 @@ async def room_socket(websocket: WebSocket, slug: str, token: str) -> None:
             "peerId": peer_id,
             "hostPeerId": state.host_peer_id,
             "gmPeerId": next((pid for pid, p in state.peers.items() if p.is_gm), None),
-            "roomInfo": {"slug": room["slug"], "name": room["name"], "gameDefRef": room["game_def_ref"]},
+            "roomInfo": {
+                "slug": room["slug"],
+                "name": room["name"],
+                "gameDefRef": room["game_def_ref"],
+                # Tells the client not to bother uploading a recovery snapshot at all
+                # (docs/DECISIONS.md D19) — an anonymous room's server-side RoomState
+                # gets discarded the moment it's empty anyway, so there'd be nothing
+                # left to resume from.
+                "isAnonymous": room["is_anonymous"],
+            },
             # Every already-connected peer's presence, so a joiner can render everyone
             # immediately rather than waiting on a peer-joined for each one it missed.
             "peers": [_presence(p) for p in state.peers.values() if p.peer_id != peer_id],
@@ -218,6 +237,15 @@ async def _handle_disconnect(state: RoomState, peer_id: str) -> None:
     new_host_id = state.pick_next_host(exclude=peer_id)
     state.host_peer_id = new_host_id
     if new_host_id is None:
+        if state.is_anonymous:
+            # D19: no server-side recovery for an anonymous room in the first place
+            # (its client never uploads a snapshot at all), and nobody who doesn't
+            # already have the link can find it again — so an empty one is discarded
+            # completely (both its AnonymousRoom record and this RoomState) rather
+            # than kept around the way an accounted room's is below.
+            delete_anonymous_room(state.slug)
+            _rooms.pop(state.slug, None)
+            return
         # Room is momentarily empty — deliberately keep `state.snapshot` as-is rather
         # than clearing it: the common way this happens is the sole player reloading
         # or briefly closing their own tab, and they (or anyone else who reopens the

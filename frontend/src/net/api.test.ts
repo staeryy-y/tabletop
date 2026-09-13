@@ -113,6 +113,40 @@ describe("rooms.create", () => {
   });
 });
 
+describe("rooms.createAnonymous", () => {
+  it("posts to the anonymous-room endpoint, same body shape as rooms.create", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ slug: "abc" }));
+    await rooms.createAnonymous("Pickup Game", "secret", "bundled:generic-freeform");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/rooms/anonymous");
+    expect(JSON.parse(init.body)).toEqual({
+      name: "Pickup Game",
+      password: "secret",
+      game_def_ref: "bundled:generic-freeform",
+    });
+  });
+
+  it("sends null for an unset password", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ slug: "abc" }));
+    await rooms.createAnonymous("Pickup Game", null);
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({ name: "Pickup Game", password: null });
+  });
+});
+
+describe("rooms.delete", () => {
+  it("sends a DELETE to the room's own URL", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+    await rooms.delete("abc123");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/rooms/abc123");
+    expect(init.method).toBe("DELETE");
+  });
+});
+
 describe("users.create", () => {
   it("maps isAdmin to the snake_case field the backend expects", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ ok: true }));

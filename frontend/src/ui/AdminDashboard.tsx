@@ -49,6 +49,17 @@ export function AdminDashboard({ me, onLoggedOut }: { me: Me; onLoggedOut: () =>
     }
   }
 
+  async function deleteRoom(slug: string, name: string) {
+    if (!confirm(`Delete room "${name}"? This cannot be undone.`)) return;
+    setError(null);
+    try {
+      await rooms.delete(slug);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
   async function createUser(e: Event) {
     e.preventDefault();
     setError(null);
@@ -93,7 +104,10 @@ export function AdminDashboard({ me, onLoggedOut }: { me: Me; onLoggedOut: () =>
                 {" "}
                 &middot; {r.gameDefRef} {r.hasPassword ? "\u{1F512}" : ""} &middot;{" "}
                 <a href={`#/join/${r.slug}`}>guest link</a>
-              </span>
+              </span>{" "}
+              <button class="room-delete-button" onClick={() => deleteRoom(r.slug, r.name)}>
+                Delete
+              </button>
             </li>
           ))}
           {roomList.length === 0 && <li class="hint">No rooms yet — create one below.</li>}

@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from app.rooms import issue_guest_token, verify_guest_token
+from app.rooms import delete_anonymous_room, get_room_by_slug, issue_guest_token, verify_guest_token
 
 
 # --- Guest token: pure roundtrip logic, independent of any route ---
@@ -148,3 +148,90 @@ def test_join_room_token_is_scoped_to_that_room(admin_client):
 
     token = admin_client.post(f"/api/rooms/{slug_a}/join", json={"display_name": "Bob"}).json()["token"]
     assert verify_guest_token(token, expected_slug=slug_a) is not None
+
+
+# --- Anonymous rooms (docs/DECISIONS.md D19): no account needed, never in SQLite ---
+
+
+def test_create_anonymous_room_requires_no_login(client):
+    r = client.post("/api/rooms/anonymous", json={"name": "Pickup Game"})
+    assert r.status_code == 201
+    assert "slug" in r.json()
+
+
+def test_create_anonymous_room_rejects_empty_name(client):
+    r = client.post("/api/rooms/anonymous", json={"name": "   "})
+    assert r.status_code == 400
+
+
+def test_anonymous_room_is_immediately_joinable_with_no_account(client):
+    slug = client.post("/api/rooms/anonymous", json={"name": "Pickup Game"}).json()["slug"]
+    r = client.post(f"/api/rooms/{slug}/join", json={"display_name": "Alice"})
+    assert r.status_code == 200
+    assert r.json()["displayName"] == "Alice"
+
+
+def test_anonymous_room_password_is_enforced_like_an_accounted_room(client):
+    slug = client.post("/api/rooms/anonymous", json={"name": "Locked", "password": "hunter2"}).json()["slug"]
+    assert client.post(f"/api/rooms/{slug}/join", json={"display_name": "Bob"}).status_code == 401
+    assert client.post(f"/api/rooms/{slug}/join", json={"display_name": "Bob", "password": "hunter2"}).status_code == 200
+
+
+def test_get_room_by_slug_marks_an_anonymous_room_correctly(client):
+    slug = client.post("/api/rooms/anonymous", json={"name": "Pickup Game"}).json()["slug"]
+    room = get_room_by_slug(slug)
+    assert room is not None
+    assert room["is_anonymous"] is True
+    assert room["owner_user_id"] is None
+
+
+def test_get_room_by_slug_marks_an_accounted_room_correctly(admin_client):
+    slug = admin_client.post("/api/rooms", json={"name": "Owned"}).json()["slug"]
+    room = get_room_by_slug(slug)
+    assert room["is_anonymous"] is False
+    assert room["owner_user_id"] is not None
+
+
+def test_anonymous_rooms_never_appear_in_the_dashboard_room_list(admin_client, second_client):
+    anon_slug = second_client.post("/api/rooms/anonymous", json={"name": "Pickup"}).json()["slug"]
+    admin_client.post("/api/rooms", json={"name": "Mine"})
+
+    slugs = {r["slug"] for r in admin_client.get("/api/rooms").json()}
+    assert anon_slug not in slugs
+
+
+def test_delete_anonymous_room_is_idempotent_and_needs_no_prior_check(client):
+    slug = client.post("/api/rooms/anonymous", json={"name": "Pickup"}).json()["slug"]
+    delete_anonymous_room(slug)
+    assert get_room_by_slug(slug) is None
+    delete_anonymous_room(slug)  # already gone — must not raise
+    delete_anonymous_room("never-existed")  # must not raise either
+
+
+# --- Deleting an accounted room ---
+
+
+def test_delete_room_requires_login(client):
+    assert client.delete("/api/rooms/does-not-exist").status_code == 401
+
+
+def test_delete_room_404_for_unknown_slug(admin_client):
+    assert admin_client.delete("/api/rooms/does-not-exist").status_code == 404
+
+
+def test_delete_room_removes_it(admin_client):
+    slug = admin_client.post("/api/rooms", json={"name": "Doomed"}).json()["slug"]
+    r = admin_client.delete(f"/api/rooms/{slug}")
+    assert r.status_code == 204
+    assert get_room_by_slug(slug) is None
+
+
+def test_delete_room_requires_ownership(admin_client, second_client):
+    slug = admin_client.post("/api/rooms", json={"name": "Not Yours"}).json()["slug"]
+
+    admin_client.post("/api/users", json={"username": "other-admin", "password": "password123", "is_admin": True})
+    second_client.post("/api/auth/login", json={"username": "other-admin", "password": "password123"})
+
+    r = second_client.delete(f"/api/rooms/{slug}")
+    assert r.status_code == 403
+    assert get_room_by_slug(slug) is not None  # still there
