@@ -5,13 +5,27 @@ if a listed assumption stops holding.
 
 ## D1 — Client stack: Vite + TypeScript, PixiJS for canvas, Preact for UI chrome
 
-Needed a WebGL-backed 2D canvas for a pannable/zoomable map with draggable tokens at
-reasonable frame rates — plain `<canvas>` 2D is workable but PixiJS gives sprite batching,
-hit-testing, and a scene graph for free. For the surrounding UI (chat, sheets, lobby,
-admin dashboard) a full React would be heavier than this needs; Preact (~3KB) gives
-components/state without the weight, and its API is close enough to React that it's not
-an unusual choice. Both are plain npm deps built by Vite — no runtime dependency on either
-at request time.
+Needed a WebGL-backed 2D canvas for a pannable/zoomable table with draggable
+cards/pieces/tokens at reasonable frame rates — plain `<canvas>` 2D is workable but
+PixiJS gives sprite batching, hit-testing, and a scene graph for free.
+
+**PixiJS over Phaser/Excalibur.js specifically:** those two are full *game engines* —
+built-in physics, an opinionated Scene lifecycle that owns the update/render loop,
+tilemap/animation-FSM/audio systems — aimed at building games with levels and win/lose
+states. None of that fits a persistent, network-synced canvas of draggable objects with
+no physics (dice results come from RNG, not simulated tumbling) and no game loop to
+speak of (the host-authoritative object model in ARCHITECTURE.md is the source of
+truth, not a local engine loop). Using either would mean fighting their state-ownership
+assumptions to instead drive everything from our own synced object model, plus shipping
+a physics engine and tilemap loader that never get used. PixiJS is a bare renderer with
+no opinion about where state lives — told "draw this sprite here," which is exactly the
+shape a WebRTC-synced scene graph needs — and it's the smaller, more mature dependency of
+the three (Phaser 2 itself was built on top of Pixi).
+
+For the surrounding UI (chat, sheets, lobby, admin dashboard) a full React would be
+heavier than this needs; Preact (~3KB) gives components/state without the weight, and its
+API is close enough to React that it's not an unusual choice. Both PixiJS and Preact are
+plain npm deps built by Vite — no runtime dependency on either at request time.
 
 ## D2 — Build output committed to git, no Node at deploy time
 
