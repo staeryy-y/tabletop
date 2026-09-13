@@ -1,1 +1,17 @@
 *.pdf
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Runtime data (accounts, room metadata, session secret) — never committed, see
+# docs/ARCHITECTURE.md "Data model"
+data/
+
+# Frontend build tooling — NOT frontend/dist/, which is intentionally committed since
+# the deploy host only guarantees python3, not Node. See docs/DECISIONS.md D2.
+frontend/node_modules/
+frontend/tsconfig.tsbuildinfo
+
+.DS_Store
