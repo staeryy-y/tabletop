@@ -174,6 +174,13 @@ If the host's WS disconnects:
 4. If no snapshot exists yet (host left within seconds of room creation), the new host
    starts a fresh empty state.
 
+This also covers a room going fully empty for a while (e.g. the sole player reloading
+or briefly closing their tab) and then being reopened: the server keeps the last
+snapshot around rather than clearing it just because `state.peers` was momentarily
+empty, so reopening the room resumes from it the same way a live handoff would, not a
+blank table. The snapshot only ever really disappears if the server process itself
+restarts (it's in-memory only, per D14 — no game state is written to disk).
+
 This means a mid-session host disconnect costs a brief reconnect pause and up to a few
 seconds of the most recent state, not the whole session — acceptable for a tabletop game,
 and avoids needing the server to understand game state to reconstruct it.

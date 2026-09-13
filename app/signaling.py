@@ -218,7 +218,14 @@ async def _handle_disconnect(state: RoomState, peer_id: str) -> None:
     new_host_id = state.pick_next_host(exclude=peer_id)
     state.host_peer_id = new_host_id
     if new_host_id is None:
-        state.snapshot = None  # room is empty; nothing to resume
+        # Room is momentarily empty — deliberately keep `state.snapshot` as-is rather
+        # than clearing it: the common way this happens is the sole player reloading
+        # or briefly closing their own tab, and they (or anyone else who reopens the
+        # room later, same process lifetime) should resume where they left off rather
+        # than finding an empty table. See RoomState.elect_host_on_join — the next
+        # joiner becomes host via the plain is_first path and gets this same
+        # snapshot in their `you-are-host`, same as if a peer had stayed connected
+        # the whole time.
         return
     new_host = state.peers[new_host_id]
     await _send(new_host, {"type": "you-are-host", "snapshot": state.snapshot})

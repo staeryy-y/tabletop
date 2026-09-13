@@ -317,7 +317,10 @@ def test_disconnect_of_the_host_promotes_a_gm_and_notifies_everyone():
     assert all(m["type"] != "you-are-host" for m in other.ws.sent)
 
 
-def test_disconnect_of_the_last_peer_clears_host_and_snapshot():
+def test_disconnect_of_the_last_peer_clears_host_but_keeps_the_snapshot():
+    # The snapshot deliberately survives the room going momentarily empty — the common
+    # way this happens is the sole player reloading (or briefly closing) their own tab,
+    # and they should resume where they left off rather than finding an empty table.
     state = RoomState()
     host = make_peer("host")
     state.peers = {"host": host}
@@ -328,7 +331,23 @@ def test_disconnect_of_the_last_peer_clears_host_and_snapshot():
 
     assert state.peers == {}
     assert state.host_peer_id is None
-    assert state.snapshot is None
+    assert state.snapshot == {"table": "state"}
+
+
+def test_rejoining_an_emptied_room_resumes_from_the_kept_snapshot():
+    state = RoomState()
+    host = make_peer("host")
+    state.peers = {"host": host}
+    state.host_peer_id = "host"
+    state.snapshot = {"table": "state"}
+    asyncio.run(signaling._handle_disconnect(state, "host"))
+    assert state.host_peer_id is None  # room is momentarily empty
+
+    promoted, needs_broadcast = state.elect_host_on_join("host", is_gm=False)
+
+    assert (promoted, needs_broadcast) == (True, False)
+    assert state.host_peer_id == "host"
+    assert state.snapshot == {"table": "state"}  # still there for the `you-are-host` reply
 
 
 # --- End-to-end protocol, over real (in-process) WebSocket frames ---
@@ -548,3 +567,26 @@ def test_ws_host_migration_end_to_end_with_snapshot_recovery(admin_client, secon
             assert left["type"] == "peer-left"
             promoted = ws2.receive_json()
             assert promoted == {"type": "you-are-host", "snapshot": {"cards": ["a", "b"]}}
+
+
+def test_ws_reloading_as_the_sole_player_resumes_from_the_last_snapshot_instead_of_resetting(admin_client):
+    # The regression this guards: reloading (or briefly closing) the only open tab in a
+    # room used to wipe app.signaling's in-memory snapshot the instant the room went
+    # empty, so reopening it always started from a blank table even though nothing else
+    # in the session had actually asked for a fresh start.
+    slug = admin_client.post("/api/rooms", json={"name": "R"}).json()["slug"]
+    join = _join(admin_client, slug, "Alice")
+
+    with admin_client.websocket_connect(f"/ws/room/{slug}?token={join['token']}") as ws1:
+        ws1.receive_json()  # welcome
+        ws1.receive_json()  # you-are-host
+        ws1.send_json({"type": "snapshot", "blob": {"cards": ["a", "b"]}})
+        ws1.close()
+
+    # Reconnecting (simulating a page reload) with the same guest token re-joins the
+    # now-empty room.
+    with admin_client.websocket_connect(f"/ws/room/{slug}?token={join['token']}") as ws2:
+        welcome = ws2.receive_json()
+        assert welcome["hostPeerId"] == welcome["peerId"]
+        resumed = ws2.receive_json()
+        assert resumed == {"type": "you-are-host", "snapshot": {"cards": ["a", "b"]}}

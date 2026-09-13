@@ -63,6 +63,15 @@ that touched this log.
   toggle, back-to-dashboard), and the chat dropdown floating just above the toolbar.
   Not the full pixel-art pass (still a separate open item below) — this is layout/
   chrome, not a visual-asset overhaul.
+- Table state now actually survives a host reloading or briefly closing their tab —
+  `app/signaling.py`'s in-memory recovery snapshot used to be wiped the instant a room's
+  peer count hit zero (see `_handle_disconnect`), so reopening a room you'd just been
+  alone in always started blank; it's now kept until either someone reopens the room
+  (resuming from it) or the **server process itself restarts** (still in-memory only,
+  per D14 — no game state is written to disk, so a full server restart still resets
+  everything; only the browser-level reload/close case was ever the bug). Also added a
+  best-effort final snapshot upload on `pagehide` (tab close/reload/navigate-away) so
+  reloading right after a move doesn't lose up to the full 5s periodic-upload window.
 
 ## Known gaps / open feedback
 

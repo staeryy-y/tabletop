@@ -114,11 +114,22 @@ export function RoomTable({ slug }: { slug: string }) {
     connRef.current = conn;
     let mySelfId: string | null = null;
 
-    const snapshotInterval = setInterval(() => {
+    function uploadSnapshotIfHost(): void {
       if (roomConnRef.current?.isHost) {
         conn.send({ type: "snapshot", blob: roomConnRef.current.currentSnapshot() });
       }
-    }, SNAPSHOT_UPLOAD_INTERVAL_MS);
+    }
+    const snapshotInterval = setInterval(uploadSnapshotIfHost, SNAPSHOT_UPLOAD_INTERVAL_MS);
+    // Best-effort: also flush immediately when the tab is about to go away (reload,
+    // close, navigate elsewhere) rather than only relying on the periodic interval —
+    // otherwise reloading right after a move could lose up to
+    // SNAPSHOT_UPLOAD_INTERVAL_MS worth of the most recent state (see
+    // app/signaling.py's _handle_disconnect, which now keeps whatever snapshot exists
+    // rather than wiping it on a solo reload — this just shrinks how stale it can be).
+    // `pagehide` fires more reliably than `beforeunload` across mobile/bfcache cases;
+    // a plain synchronous WebSocket send of a small JSON message on either is
+    // reliable enough in practice, unlike an async fetch that can get cancelled.
+    window.addEventListener("pagehide", uploadSnapshotIfHost);
 
     const unsubscribe = conn.on((event) => {
       if (event.type === "welcome") {
@@ -252,6 +263,7 @@ export function RoomTable({ slug }: { slug: string }) {
     return () => {
       disposed = true;
       clearInterval(snapshotInterval);
+      window.removeEventListener("pagehide", uploadSnapshotIfHost);
       unsubscribe();
       conn.close();
       connRef.current = null;
