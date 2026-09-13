@@ -7,11 +7,16 @@ function key(slug: string): string {
   return `rpg-tabletop:room-token:${slug}`;
 }
 
+// `window.localStorage`, not the bare global: under Vitest (Node + jsdom), Node's own
+// native `localStorage` global shadows jsdom's working implementation unless a
+// --localstorage-file flag is passed, so the bare identifier is unreliable in tests even
+// though it's identical to window.localStorage in every real browser.
+
 export function storeRoomToken(slug: string, result: JoinResult): void {
-  localStorage.setItem(key(slug), JSON.stringify(result));
+  window.localStorage.setItem(key(slug), JSON.stringify(result));
 }
 
 export function loadRoomToken(slug: string): JoinResult | null {
-  const raw = localStorage.getItem(key(slug));
+  const raw = window.localStorage.getItem(key(slug));
   return raw ? (JSON.parse(raw) as JoinResult) : null;
 }

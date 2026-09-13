@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import preact from "@preact/preset-vite";
 
 // Local dev only: `npm run dev` runs Vite's own dev server, proxying API/WS calls to
@@ -13,5 +13,9 @@ export default defineConfig({
       "/game-defs": "http://127.0.0.1:8000",
       "/ws": { target: "ws://127.0.0.1:8000", ws: true },
     },
+  },
+  test: {
+    environment: "jsdom",
+    setupFiles: ["./vitest.setup.ts"],
   },
 });
