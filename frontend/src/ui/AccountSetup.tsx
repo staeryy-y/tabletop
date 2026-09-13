@@ -1,7 +1,13 @@
 import { useState } from "preact/hooks";
-import { ApiError, auth } from "../net/api";
+import { ApiError, Me, auth } from "../net/api";
 
-export function ChangePassword({ onDone }: { onDone: () => void }) {
+/** The forced first-login flow for any account with mustChangePassword set — the
+ * bootstrap admin/admin account, or one an admin just created. Both the username and
+ * password are placeholders someone else assigned, so both get replaced together; see
+ * app/auth.py's complete_setup docstring for why "admin" specifically shouldn't stick
+ * around as a real identity. */
+export function AccountSetup({ me, onDone }: { me: Me; onDone: (me: Me) => void }) {
+  const [username, setUsername] = useState("");
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -17,10 +23,10 @@ export function ChangePassword({ onDone }: { onDone: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      await auth.changePassword(current, next);
-      onDone();
+      const updated = await auth.completeSetup(current, username, next);
+      onDone(updated);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "failed to change password");
+      setError(err instanceof ApiError ? err.message : "failed to complete setup");
     } finally {
       setBusy(false);
     }
@@ -29,8 +35,20 @@ export function ChangePassword({ onDone }: { onDone: () => void }) {
   return (
     <div class="centered-page">
       <form class="panel" onSubmit={submit}>
-        <h1>Set a real password</h1>
-        <p class="hint">This account still has its bootstrap password. Choose a new one to continue.</p>
+        <h1>Finish setting up your account</h1>
+        <p class="hint">
+          "{me.username}" is a placeholder, not a real account yet — pick a real username and password to
+          continue.
+        </p>
+        <label>
+          New username
+          <input
+            value={username}
+            onInput={(e) => setUsername((e.target as HTMLInputElement).value)}
+            autofocus
+            required
+          />
+        </label>
         <label>
           Current password
           <input type="password" value={current} onInput={(e) => setCurrent((e.target as HTMLInputElement).value)} />
@@ -45,7 +63,7 @@ export function ChangePassword({ onDone }: { onDone: () => void }) {
         </label>
         {error && <p class="error">{error}</p>}
         <button type="submit" disabled={busy}>
-          {busy ? "Saving…" : "Change password"}
+          {busy ? "Saving…" : "Finish setup"}
         </button>
       </form>
     </div>

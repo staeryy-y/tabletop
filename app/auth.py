@@ -79,6 +79,26 @@ def set_password(user_id: int, new_password: str) -> None:
         )
 
 
+def complete_setup(user_id: int, new_username: str, new_password: str) -> None:
+    """Clears must_change_password *and* renames the account — used for the forced
+    first-login flow. A freshly bootstrapped or admin-created account starts with a
+    placeholder identity assigned by someone else (literally "admin" for the bootstrap
+    account, or whatever an inviting admin typed for a new one) as well as a placeholder
+    password; both are "not really yours yet" in the same way, so both get replaced in
+    the same step rather than treating the username as a permanent given.
+    """
+    with connection() as conn:
+        existing = conn.execute(
+            "SELECT id FROM users WHERE username = ? AND id != ?", (new_username, user_id)
+        ).fetchone()
+        if existing:
+            raise ValueError(f"user {new_username!r} already exists")
+        conn.execute(
+            "UPDATE users SET username = ?, password_hash = ?, must_change_password = 0 WHERE id = ?",
+            (new_username, hash_password(new_password), user_id),
+        )
+
+
 def get_user(user_id: int) -> Optional[dict]:
     with connection() as conn:
         row = conn.execute(

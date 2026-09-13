@@ -44,35 +44,101 @@ def test_change_password_requires_login(client):
     assert r.status_code == 401
 
 
-def test_change_password_rejects_wrong_current_password(admin_client):
-    r = admin_client.post(
-        "/api/auth/change-password",
-        json={"current_password": "not-the-password", "new_password": "something else"},
-    )
-    assert r.status_code == 401
-
-
-def test_change_password_rejects_reusing_the_bootstrap_password(admin_client):
-    r = admin_client.post(
-        "/api/auth/change-password", json={"current_password": "admin", "new_password": "admin"}
-    )
-    assert r.status_code == 400
-
-
-def test_change_password_success_updates_flag_and_credentials(admin_client):
+def test_change_password_refuses_to_run_before_setup_is_completed(admin_client):
+    # admin_client is still on the bootstrap admin/admin credentials at this point —
+    # must_change_password is set, so this must route through /complete-setup instead
+    # (see its docstring: skipping straight to /change-password would let the account
+    # clear the flag without ever renaming itself off "admin").
     r = admin_client.post(
         "/api/auth/change-password",
         json={"current_password": "admin", "new_password": "a real password"},
     )
+    assert r.status_code == 400
+
+
+def test_complete_setup_requires_login(client):
+    r = client.post(
+        "/api/auth/complete-setup",
+        json={"current_password": "admin", "new_username": "real-name", "new_password": "a real password"},
+    )
+    assert r.status_code == 401
+
+
+def test_complete_setup_rejects_wrong_current_password(admin_client):
+    r = admin_client.post(
+        "/api/auth/complete-setup",
+        json={"current_password": "not-the-password", "new_username": "real-name", "new_password": "x1234567"},
+    )
+    assert r.status_code == 401
+
+
+def test_complete_setup_rejects_reusing_the_bootstrap_password(admin_client):
+    r = admin_client.post(
+        "/api/auth/complete-setup",
+        json={"current_password": "admin", "new_username": "real-name", "new_password": "admin"},
+    )
+    assert r.status_code == 400
+
+
+def test_complete_setup_rejects_an_empty_username(admin_client):
+    r = admin_client.post(
+        "/api/auth/complete-setup",
+        json={"current_password": "admin", "new_username": "   ", "new_password": "a real password"},
+    )
+    assert r.status_code == 400
+
+
+def test_complete_setup_rejects_a_username_already_taken_by_someone_else(admin_client):
+    admin_client.post("/api/users", json={"username": "taken", "password": "password123", "is_admin": False})
+    r = admin_client.post(
+        "/api/auth/complete-setup",
+        json={"current_password": "admin", "new_username": "taken", "new_password": "a real password"},
+    )
+    assert r.status_code == 409
+
+
+def test_complete_setup_renames_the_account_changes_the_password_and_clears_the_flag(admin_client):
+    r = admin_client.post(
+        "/api/auth/complete-setup",
+        json={"current_password": "admin", "new_username": "real-name", "new_password": "a real password"},
+    )
     assert r.status_code == 200
+    assert r.json() == {"username": "real-name", "isAdmin": True, "mustChangePassword": False}
 
     me = admin_client.get("/api/auth/me").json()
-    assert me["mustChangePassword"] is False
+    assert me == {"username": "real-name", "isAdmin": True, "mustChangePassword": False}
 
-    # the old password no longer works for a fresh login attempt
-    r_old = admin_client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
-    assert r_old.status_code == 401
-    r_new = admin_client.post(
-        "/api/auth/login", json={"username": "admin", "password": "a real password"}
+    # neither the old username nor the old password work anymore
+    assert admin_client.post("/api/auth/login", json={"username": "admin", "password": "admin"}).status_code == 401
+    r_new = admin_client.post("/api/auth/login", json={"username": "real-name", "password": "a real password"})
+    assert r_new.status_code == 200
+
+
+def test_complete_setup_cannot_be_repeated_once_setup_is_done(admin_client):
+    admin_client.post(
+        "/api/auth/complete-setup",
+        json={"current_password": "admin", "new_username": "real-name", "new_password": "a real password"},
     )
+    r = admin_client.post(
+        "/api/auth/complete-setup",
+        json={"current_password": "a real password", "new_username": "yet-another-name", "new_password": "whatever123"},
+    )
+    assert r.status_code == 400
+
+
+def test_change_password_works_normally_once_setup_is_complete(admin_client):
+    admin_client.post(
+        "/api/auth/complete-setup",
+        json={"current_password": "admin", "new_username": "real-name", "new_password": "first real password"},
+    )
+
+    r = admin_client.post(
+        "/api/auth/change-password",
+        json={"current_password": "first real password", "new_password": "second real password"},
+    )
+    assert r.status_code == 200
+
+    r_old = admin_client.post("/api/auth/login", json={"username": "real-name", "password": "first real password"})
+    assert r_old.status_code == 401
+    r_new = admin_client.post("/api/auth/login", json={"username": "real-name", "password": "second real password"})
     assert r_new.status_code == 200

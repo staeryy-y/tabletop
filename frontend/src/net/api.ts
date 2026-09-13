@@ -46,6 +46,15 @@ export const auth = {
       current_password: currentPassword,
       new_password: newPassword,
     }),
+  /** The forced first-login flow — see app/routes_auth.py's complete_setup: a fresh
+   * account's username is as much a placeholder as its password, so both change
+   * together here rather than just the password. */
+  completeSetup: (currentPassword: string, newUsername: string, newPassword: string) =>
+    request<Me>("POST", "/api/auth/complete-setup", {
+      current_password: currentPassword,
+      new_username: newUsername,
+      new_password: newPassword,
+    }),
 };
 
 export interface UserSummary {

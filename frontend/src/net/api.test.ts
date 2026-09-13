@@ -63,6 +63,22 @@ describe("auth.login", () => {
   });
 });
 
+describe("auth.completeSetup", () => {
+  it("sends current password, new username, and new password to the right endpoint", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ username: "real-name", isAdmin: true, mustChangePassword: false }));
+
+    await auth.completeSetup("admin", "real-name", "a real password");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/auth/complete-setup");
+    expect(JSON.parse(init.body)).toEqual({
+      current_password: "admin",
+      new_username: "real-name",
+      new_password: "a real password",
+    });
+  });
+});
+
 describe("requests with no body", () => {
   it("auth.me sends a GET with no Content-Type header and no body", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ username: "x", isAdmin: false, mustChangePassword: false }));

@@ -81,3 +81,34 @@ def test_set_password_changes_the_hash_and_clears_must_change_password(client):
 
 def test_get_user_returns_none_for_a_missing_id(client):
     assert auth.get_user(999999) is None
+
+
+def test_complete_setup_renames_and_reauthenticates(client):
+    user_id = auth.create_user("placeholder", "temp-pass", is_admin=False)
+
+    auth.complete_setup(user_id, "real-name", "a real password")
+
+    assert auth.authenticate("placeholder", "temp-pass") is None
+    fresh = auth.authenticate("real-name", "a real password")
+    assert fresh is not None
+    assert fresh["id"] == user_id
+    assert auth.get_user(user_id)["must_change_password"] == 0
+
+
+def test_complete_setup_rejects_a_username_collision_and_changes_nothing(client):
+    other_id = auth.create_user("existing", "whatever123", is_admin=False)
+    user_id = auth.create_user("placeholder", "temp-pass", is_admin=False)
+
+    with pytest.raises(ValueError):
+        auth.complete_setup(user_id, "existing", "a real password")
+
+    # neither account was touched by the failed attempt
+    assert auth.authenticate("placeholder", "temp-pass") is not None
+    assert auth.authenticate("existing", "whatever123") is not None
+    assert auth.get_user(other_id)["username"] == "existing"
+
+
+def test_complete_setup_allows_a_user_to_keep_their_own_current_username(client):
+    user_id = auth.create_user("keepme", "temp-pass", is_admin=False)
+    auth.complete_setup(user_id, "keepme", "a real password")  # not a collision with itself
+    assert auth.authenticate("keepme", "a real password") is not None

@@ -3,7 +3,7 @@ import { useEffect, useState } from "preact/hooks";
 import "./style.css";
 import { ApiError, Me, auth } from "./net/api";
 import { Login } from "./ui/Login";
-import { ChangePassword } from "./ui/ChangePassword";
+import { AccountSetup } from "./ui/AccountSetup";
 import { AdminDashboard } from "./ui/AdminDashboard";
 import { RoomJoin } from "./ui/RoomJoin";
 import { RoomTable } from "./ui/RoomTable";
@@ -49,7 +49,7 @@ function App() {
 
   if (me === undefined) return <div class="centered-page">Loading…</div>;
   if (me === null) return <Login onLoggedIn={setMe} />;
-  if (me.mustChangePassword) return <ChangePassword onDone={() => setMe({ ...me, mustChangePassword: false })} />;
+  if (me.mustChangePassword) return <AccountSetup me={me} onDone={setMe} />;
   return <AdminDashboard me={me} onLoggedOut={() => setMe(null)} />;
 }
 
