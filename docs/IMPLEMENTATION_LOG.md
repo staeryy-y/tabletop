@@ -158,10 +158,66 @@ that touched this log.
 - WASD panning direction bug fixed (D24) — W was moving the camera backward and A the
   wrong way, on both axes; `engine/camera.ts`'s `stepCamera` had all four pan
   directions inverted relative to how `engine/table.ts` actually applies the result.
+- Hidden cards now show a colored eye badge to *every* player, not just the hider
+  (D25) — the badge is tinted with the hider's own presence color, so the table can
+  tell someone's secretly viewing a card, and who, without ever seeing its content.
+  `net/syncProtocol.ts`'s `redactPileFor` still swaps front for back for anyone but
+  the hider; it just no longer scrubs `hiddenBy` itself.
+- A guest joining now gets its own real, randomly-assigned color immediately, instead
+  of a hardcoded gray placeholder — `app/signaling.py`'s `welcome` message gained a
+  `self` field carrying the joiner's own presence (a peer was never told about itself
+  via `peer-joined`, which excludes the peer it's about, so this was the only gap).
+  This also fixes player tokens appearing to be missing — a gray token blends into the
+  table's own gray/dark palette closely enough to be easy to miss entirely.
+- Live cursor markers now ease toward their latest position each frame
+  (`engine/table.ts`'s `smoothCursors`) instead of snapping straight to it on every
+  throttled cursor-hint (~120ms apart) — "the player cursor is fine, but add some
+  artificial smoothing."
+- A second grip handle below every pile drags the *entire* stack as one unit
+  (`TableModel.movePile`, no split/merge — D28), leaving the existing card-body drag's
+  default behavior (pull just the top card off a multi-card stack) unchanged, per the
+  explicit "add an additional drag-only handler" request.
+- Mats: a new Piece-shaped object family that always renders beneath every Card/Piece
+  and can be locked so only the GM can move/rotate/remove it (D26). Full stack: model
+  (`TableModel`'s mat methods), sync protocol (`spawn-mat`/`move-mat`/`rotate-mat-by`/
+  `set-mat-rotation`/`set-mat-locked`/`remove-mat`, GM-gated host-side via a new
+  `getGmPeerId` callback threaded through `RoomConnection`/`ui/RoomTable.tsx`),
+  rendering (`engine/mat.ts`, `engine/table.ts`'s dedicated `matsLayer`), package data
+  model (`MatSet`/`MatEntry`, including the bundled-YAML `mats:` schema), and a full
+  editor section (`MatSetsEditor`/`MatEntriesEditor`/`NewMatModal`, matching Pieces'
+  D23 modal-on-create treatment plus a "starts locked" checkbox).
+- The game-package editor is now tabbed — one tab per element (tracks, dice, cards,
+  pieces, mats, macros) plus a shared "Layout" tab covering all three set families in
+  one draggable canvas, replacing the old single continuously-scrolling editor and its
+  card-sets-only starting-layout preview (D27) — the long-standing, explicitly
+  repeated "each editor element gets its own tab, plus a Layout tab" request.
 
 ## Known gaps / open feedback
 
 Newest first. Fixed items move to "Implemented" above with a note here of what changed.
+
+- **(Fixed)** The game-package editor is now genuinely tabbed, with a shared "Layout"
+  tab (D27) — see "Implemented" above and the pieces-gap entry below it (that entry's
+  own "Layout tab" blocker is what this closes).
+
+- **(Fixed)** Mats: a new lockable, always-on-bottom object family (D26) — see
+  "Implemented" above.
+
+- **(Fixed)** A second grip handle drags a whole stack as one unit, leaving the
+  existing default (drag pulls one card off) unchanged (D28) — see "Implemented"
+  above.
+
+- **(Fixed)** Hidden cards now show *who* is hiding them, via a colored eye badge
+  visible to everyone (D25) — a deliberate narrowing of the earlier "no trace at all"
+  privacy guarantee — see "Implemented" above.
+
+- **(Fixed)** A joining guest's own player color was a hardcoded gray placeholder
+  (easy to mistake for "no token at all," since it blends into the table's own
+  gray/dark palette) instead of the server's real randomly-assigned color — see
+  "Implemented" above.
+
+- **(Fixed)** Live cursor markers now ease toward their target each frame instead of
+  snapping on every throttled update — see "Implemented" above.
 
 - **(Fixed)** WASD pan was backwards on both axes (D24) — caught by a user "by feel,"
   not by reading the code; see "Implemented" above.
@@ -173,10 +229,9 @@ Newest first. Fixed items move to "Implemented" above with a note here of what c
   object family, not a variant of Pile/Card (no flip, no hide, no merge-on-drop) — see
   "Implemented" above. **Still not covered** by this fix: a package's `draw_pile: true`
   face-down-pile piece mode and connector-snapping (both in docs/GAME_DEFINITION.md
-  "Pieces" but not yet in `PieceSet`/`PieceEntry`'s actual fields), and the editor still
-  has no drag-to-position control for a piece set's layout anchor the way
-  `StartingLayoutPreview` gives card sets (see the "Layout tab" item below, which this
-  was blocking).
+  "Pieces" but not yet in `PieceSet`/`PieceEntry`'s actual fields). The
+  no-drag-to-position-control gap this note used to flag is now closed by the Layout
+  tab (D27) — see "Implemented" above.
 
 - **(Fixed)** Multi-select — box-select several piles, then move/rotate-around-centroid/
   flip/hide/collapse-into-a-deck them together (D20) — see "Implemented" above.
@@ -256,17 +311,10 @@ Newest first. Fixed items move to "Implemented" above with a note here of what c
   shapes/colors, not actual sprite assets, since nothing in this environment can author
   real pixel-art images; and the integer-zoom-snapping refinement ARCHITECTURE.md itself
   calls "a nice-to-have, not required."
-- **(Not started)** The game-package editor was explicitly requested to be restructured
-  into one tab per element (cards, pieces, tracks, dice, macros) plus a final "Layout"
-  tab for arranging every piece's/card set's spawn position in one place. What actually
-  shipped instead (see "Implemented" above) is narrower: card sets gained a
-  label/position and a draggable `StartingLayoutPreview`, but it's still embedded inside
-  the existing single continuously-scrolling editor, not a real tabbed layout. Piece
-  sets now have the same kind of position field (`PieceSet.startX/startY`, D21) with a
-  sensible auto-fan-out default, but — unlike card sets — nothing in the editor lets a
-  GM drag that position visually yet; a package author can only get the auto-placed
-  default today. A unified cross-element "Layout" view covering both families in one
-  tab is still unbuilt.
+- **(Fixed)** The game-package editor is now genuinely tabbed — one tab per element
+  (tracks, dice, cards, pieces, mats, macros) plus a shared "Layout" tab covering every
+  set family's starting position in one draggable canvas (D27) — see "Implemented"
+  above. This was requested and re-requested across several turns before landing.
 
 ## Explicitly out of scope for v1 (see PLAN.md, unchanged)
 

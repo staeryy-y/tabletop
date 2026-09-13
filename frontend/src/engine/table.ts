@@ -10,9 +10,10 @@
 import { Application, Container, FederatedPointerEvent, Graphics, Text, TextureStyle } from "pixi.js";
 import { CameraInput, NO_CAMERA_INPUT, stepCamera } from "./camera";
 import { CARD_HEIGHT, CARD_WIDTH, CardDef, renderCard } from "./card";
+import { MatDef, MAT_HEIGHT, MAT_WIDTH, renderMat } from "./mat";
 import { TableSyncClient, TableView } from "../net/roomConnection";
 import { TableEvent } from "../net/syncProtocol";
-import { PieceState, PileState, TableModel } from "./pileModel";
+import { MatState, PieceState, PileState, TableModel } from "./pileModel";
 import { PieceDef, PIECE_SIZE, renderPiece } from "./piece";
 import { computeSeatPositions } from "./seating";
 import { UI_TEXT } from "../uiText";
@@ -31,6 +32,9 @@ TextureStyle.defaultOptions.scaleMode = "nearest";
 
 const MERGE_RADIUS = CARD_WIDTH * 0.6;
 const ROTATE_HANDLE_OFFSET = CARD_HEIGHT / 2 + 16;
+/** Below the card, mirroring ROTATE_HANDLE_OFFSET's position above it — see
+ * makeMoveWholeStackHandle. */
+const MOVE_HANDLE_OFFSET = CARD_HEIGHT / 2 + 16;
 const CAMERA_PAN_SPEED = 400; // world units/second
 const CAMERA_ROTATE_SPEED = Math.PI / 2; // radians/second
 const PLAYER_TOKEN_RADIUS = 16;
@@ -53,6 +57,10 @@ const HINT_INTERVAL_MS = 120;
  * to 1 the moment the real, authoritative drop event arrives. */
 const REMOTE_DRAG_ALPHA = 0.85;
 const CURSOR_RADIUS = 6;
+/** How quickly a cursor marker eases toward its latest known target (smoothCursors) —
+ * higher is snappier/less laggy-feeling, lower is smoother but trails the real
+ * position more. Tuned by feel, not derived from anything. */
+const CURSOR_SMOOTHING_RATE = 18;
 /** Below this many screen pixels of movement, a background pointerdown-then-up is
  * treated as a plain click (clearing the selection) rather than a completed box-select
  * drag — otherwise every ordinary click-to-deselect would also require holding
@@ -110,6 +118,24 @@ export class TableApp implements TableView {
    * and the group operations) deliberately covers piles/cards only, per the explicit
    * request that introduced it — pieces aren't included in a box-select. */
   private pieceViews = new Map<string, Container>();
+  /** Mats (engine/mat.ts, docs/DECISIONS.md D26) live in their own child container,
+   * added to `world` before any Card/Piece view ever is (see init()) — draw order
+   * alone then keeps every mat rendered below every card/piece, permanently, with no
+   * per-frame z-sorting needed: new mats are added inside this container (never
+   * reordering `world`'s own children), and new cards/pieces are always appended
+   * directly to `world`, after this container already exists there. */
+  private matsLayer = new Container();
+  private matViews = new Map<string, Container>();
+  private matFaceLayers = new Map<string, Container>();
+  /** This client's own GM status, per docs/DECISIONS.md D26 — set once ui/RoomTable.tsx
+   * knows it (setSelfIsGm), used only to gate *local* interaction with a locked mat
+   * (its handles simply don't start a drag/rotate for a non-GM, and its right-click
+   * menu omits actions a non-GM can't do) for immediate, honest feedback. This is a
+   * UX nicety only, not the actual enforcement — net/syncProtocol.ts's HostTableSync
+   * is what actually rejects a locked mat's mutation from anyone but the GM, exactly
+   * the same "the host is the real authority" pattern used everywhere else in this
+   * file (see e.g. `dragging`'s doc comment on why only the host allocates ids). */
+  private selfIsGm = false;
   /** `localFloating` is only ever set when there's no syncClient (a bare, room-less
    * sandbox): it's the actual detached PileState pickUpTop() returned, mutated in place
    * as the pointer moves and handed to dropPile() on release — exactly the pre-M6
@@ -119,6 +145,14 @@ export class TableApp implements TableView {
    * the host is allowed to allocate the pile id a stack-split would need (see
    * pileModel.ts's setPile/loadSnapshot doc comment). */
   private dragging: { pileId: string; view: Container; x: number; y: number; localFloating: PileState | null } | null = null;
+  /** Dragging the whole-stack grip handle (makeMoveWholeStackHandle) — unlike
+   * `dragging` above (the card body itself), this never splits a card off a multi-card
+   * pile: it's TableModel.movePile's plain reposition, the same one multi-select's
+   * group drag uses, so the entire pile relocates together with no merge-on-drop
+   * either. Explicit feedback: "clicking and dragging on a stacked card should by
+   * default drag out one of the cards [the existing `dragging` behavior] — add an
+   * additional drag-only handler for the purpose of dragging the entire deck." */
+  private draggingWholePile: { pileId: string; view: Container; x: number; y: number } | null = null;
   private rotating: { pileId: string; view: Container; radians: number } | null = null;
   /** Multi-select (see docs/GAME_DEFINITION.md-adjacent request: "click and drag a box
    * to select multiple cards"). `selectedPileIds` is the source of truth; each id's
@@ -158,6 +192,11 @@ export class TableApp implements TableView {
    * for why a Piece drag can be this much simpler than a card pile's. */
   private draggingPiece: { pieceId: string; view: Container } | null = null;
   private rotatingPiece: { pieceId: string; view: Container; radians: number } | null = null;
+  /** Same idea as draggingPiece/rotatingPiece, for a Mat — see canLocallyModifyMat for
+   * the one difference: these only ever get set at all if the mat is currently
+   * modifiable by this client (unlocked, or this client is the GM). */
+  private draggingMat: { matId: string; view: Container } | null = null;
+  private rotatingMat: { matId: string; view: Container; radians: number } | null = null;
   /** Last time (performance.now()) this client sent a drag-hint — see
    * HINT_INTERVAL_MS. Reset to 0 at the start of each synced drag so the very
    * first move sends immediately rather than waiting out the throttle. */
@@ -188,6 +227,14 @@ export class TableApp implements TableView {
    * Never includes this client's own cursor — the browser already draws that; see
    * maybeSendCursorHint/applyEvent's "cursor-hint" branch. */
   private cursors = new Map<string, Container>();
+  /** Where each peer's cursor marker is actually headed — updated instantly on every
+   * cursor-hint, while the marker's own `position` only ever eases toward it a little
+   * each frame (smoothCursors, ticked alongside the camera) rather than snapping
+   * straight there. Hints only arrive throttled (~120ms apart — see HINT_INTERVAL_MS),
+   * which without this made other players' cursors visibly teleport in little jumps
+   * instead of gliding — "the player cursor is fine, but add some artificial
+   * smoothing." */
+  private cursorTargets = new Map<string, { x: number; y: number }>();
   private lastCursorHintAt = 0;
 
   async init(container: HTMLElement): Promise<void> {
@@ -196,6 +243,7 @@ export class TableApp implements TableView {
     this.app.stage.addChild(this.world);
     this.world.position.set(container.clientWidth / 2, container.clientHeight / 2);
     this.world.addChild(this.drawTableBackground()); // added first — behind every pile/token
+    this.world.addChild(this.matsLayer); // added next — behind every Card/Piece, above the background (D26)
 
     this.app.stage.eventMode = "static";
     this.app.stage.hitArea = this.app.screen;
@@ -233,6 +281,13 @@ export class TableApp implements TableView {
   setSelfPeerId(peerId: string): void {
     this.selfPeerId = peerId;
     for (const pileId of this.views.keys()) this.redraw(pileId);
+  }
+
+  /** Whether this client is the room's GM (docs/DECISIONS.md D13) — see `selfIsGm`'s
+   * own doc comment for what this actually gates (a local-only UX nicety, not the real
+   * enforcement). */
+  setSelfIsGm(isGm: boolean): void {
+    this.selfIsGm = isGm;
   }
 
   /** The underlying object model — net/roomConnection.ts needs the actual instance
@@ -279,11 +334,26 @@ export class TableApp implements TableView {
     } else if (event.type === "piece-removed") {
       this.model.removePiece(event.pieceId);
       this.removePieceView(event.pieceId);
+    } else if (event.type === "mat-upserted") {
+      this.model.setMat(event.mat);
+      const view = this.matViews.get(event.mat.id);
+      if (view) {
+        view.position.set(event.mat.x, event.mat.y);
+        view.rotation = event.mat.rotation;
+        this.redrawMat(event.mat.id); // locked state (and hence the lock badge) can change too
+      } else {
+        this.mountMatView(event.mat);
+      }
+    } else if (event.type === "mat-removed") {
+      this.model.removeMat(event.matId);
+      this.removeMatView(event.matId);
     } else if (event.type === "snapshot") {
       for (const pileId of [...this.views.keys()]) this.removeView(pileId);
       for (const pieceId of [...this.pieceViews.keys()]) this.removePieceView(pieceId);
+      for (const matId of [...this.matViews.keys()]) this.removeMatView(matId);
       this.clearSelection(); // ids from before a resumed/migrated snapshot may not exist any more
-      this.model.loadSnapshot(event.piles, event.pieces ?? []);
+      this.model.loadSnapshot(event.piles, event.pieces ?? [], event.mats ?? []);
+      for (const mat of event.mats ?? []) this.mountMatView(mat);
       for (const pile of event.piles) this.mountView(pile);
       for (const piece of event.pieces ?? []) this.mountPieceView(piece);
     } else if (event.type === "drag-hint") {
@@ -309,9 +379,13 @@ export class TableApp implements TableView {
   /** Move (creating if needed) the small colored marker showing where `peerId`'s
    * pointer currently is. Redrawn with their latest known color every time, not just
    * on creation, so a color change (the swatch picker) doesn't leave a stale-colored
-   * cursor behind. */
+   * cursor behind. Only sets the *target* the marker eases toward — see
+   * cursorTargets' doc comment and smoothCursors, below, for the actual motion — except
+   * on first sighting, when there's nothing yet to ease from, so it snaps straight
+   * there instead of gliding in from the table's origin. */
   private updateCursor(peerId: string, x: number, y: number): void {
     let marker = this.cursors.get(peerId);
+    const firstSighting = !marker;
     if (!marker) {
       marker = new Container();
       this.cursors.set(peerId, marker);
@@ -320,10 +394,26 @@ export class TableApp implements TableView {
     marker.removeChildren();
     const g = new Graphics();
     g.circle(0, 0, CURSOR_RADIUS);
-    g.fill({ color: this.playerColors.get(peerId) ?? "#888888" });
+    g.fill({ color: this.colorForPeer(peerId) });
     g.stroke({ width: 1.5, color: 0x1a1a1a });
     marker.addChild(g);
-    marker.position.set(x, y);
+    this.cursorTargets.set(peerId, { x, y });
+    if (firstSighting) marker.position.set(x, y);
+  }
+
+  /** Eases every cursor marker a little closer to its latest known target each frame,
+   * instead of snapping straight there on every throttled cursor-hint — see
+   * cursorTargets' doc comment. Frame-rate independent (an exponential decay toward
+   * the target, not a fixed per-frame step), and ticked alongside the camera since
+   * both already run off the same per-frame ticker. */
+  private smoothCursors(dtSeconds: number): void {
+    const ease = 1 - Math.exp(-dtSeconds * CURSOR_SMOOTHING_RATE);
+    for (const [peerId, marker] of this.cursors) {
+      const target = this.cursorTargets.get(peerId);
+      if (!target) continue;
+      marker.position.x += (target.x - marker.position.x) * ease;
+      marker.position.y += (target.y - marker.position.y) * ease;
+    }
   }
 
   // --- Camera: WASD pan, Q/E rotate (engine/camera.ts does the actual math) ---
@@ -343,6 +433,7 @@ export class TableApp implements TableView {
     );
     this.world.position.set(next.x, next.y);
     this.world.rotation = next.rotation;
+    this.smoothCursors(dtSeconds);
   }
 
   // --- Default player tokens: one colored marker per connected peer, arranged around
@@ -382,6 +473,7 @@ export class TableApp implements TableView {
       if (!seen.has(peerId)) {
         this.world.removeChild(view);
         this.cursors.delete(peerId);
+        this.cursorTargets.delete(peerId);
       }
     }
   }
@@ -465,6 +557,18 @@ export class TableApp implements TableView {
     }
   }
 
+  /** Spawn a standalone Mat (docs/DECISIONS.md D26) — same dispatch pattern as
+   * spawnPiece above. Spawning is never gated to the GM here (matching spawn/
+   * spawn-piece/spawn-stack, none of which are either) — only *mutating an already-
+   * locked* mat is (see net/syncProtocol.ts's canModifyMat). */
+  spawnMat(def: MatDef, worldX: number, worldY: number, locked = false): void {
+    if (this.syncClient) {
+      this.syncClient.sendRequest({ type: "spawn-mat", def, x: worldX, y: worldY, locked });
+    } else {
+      this.mountMatView(this.model.spawnMat(def, worldX, worldY, locked));
+    }
+  }
+
   /** A static reference marker — see TABLE_BACKGROUND_*'s doc comment — drawn once at
    * init() and never redrawn (it doesn't represent any model state, so there's nothing
    * to keep in sync). */
@@ -520,6 +624,7 @@ export class TableApp implements TableView {
     this.faceLayers.set(pile.id, faceLayer);
 
     view.addChild(this.makeRotateHandle(pile.id));
+    view.addChild(this.makeMoveWholeStackHandle(pile.id));
 
     this.world.addChild(view);
     this.views.set(pile.id, view);
@@ -547,12 +652,56 @@ export class TableApp implements TableView {
     return handle;
   }
 
+  /** A small grip handle below the card — dragging it moves the *entire* pile as one
+   * unit (TableModel.movePile, no split, no merge), unlike dragging the card body
+   * itself (which pulls just the top card off a multi-card stack by default — see
+   * `dragging`'s doc comment). Shown on every pile, not just multi-card ones: on a
+   * single-card pile it behaves identically to a normal drag anyway, so there's no
+   * benefit to hiding it there, and hiding/showing it as a pile grows or shrinks would
+   * just be one more thing to keep in sync for no visible upside. */
+  private makeMoveWholeStackHandle(pileId: string): Container {
+    const handle = new Graphics();
+    handle.roundRect(-11, MOVE_HANDLE_OFFSET - 6, 22, 12, 3);
+    handle.fill({ color: 0xffffff, alpha: 0.6 });
+    handle.stroke({ width: 1, color: 0x1a1a1a });
+    for (const dy of [-3, 0, 3]) {
+      handle.moveTo(-6, MOVE_HANDLE_OFFSET + dy).lineTo(6, MOVE_HANDLE_OFFSET + dy);
+    }
+    handle.stroke({ width: 1, color: 0x1a1a1a, alpha: 0.7 });
+    handle.eventMode = "static";
+    handle.cursor = "grab";
+    handle.on("pointerdown", (e: FederatedPointerEvent) => {
+      e.stopPropagation();
+      this.beginWholePileDrag(pileId, e);
+    });
+    return handle;
+  }
+
+  private beginWholePileDrag(pileId: string, e: FederatedPointerEvent): void {
+    if (this.dragging || this.groupDragging || this.draggingWholePile) return;
+    const view = this.views.get(pileId);
+    const pile = this.model.getPile(pileId);
+    if (!view || !pile) return;
+    this.draggingWholePile = { pileId, view, x: pile.x, y: pile.y };
+    this.lastDragHintAt = 0; // reuse the same cosmetic-preview throttle as a normal card drag
+    view.alpha = 0.85;
+    view.zIndex = 1000;
+  }
+
   private redraw(pileId: string): void {
     const pile = this.model.getPile(pileId);
     const faceLayer = this.faceLayers.get(pileId);
     if (!pile || !faceLayer) return;
     const top = pile.cards[pile.cards.length - 1];
-    renderCard(faceLayer, top.def, top.faceUp, top.hiddenBy, this.selfPeerId, pile.cards.length);
+    renderCard(faceLayer, top.def, top.faceUp, top.hiddenBy, this.selfPeerId, pile.cards.length, (peerId) => this.colorForPeer(peerId));
+  }
+
+  /** A player's current presence color, or a plain neutral gray if they're unknown
+   * (e.g. they've since left the room) — shared by the hidden-card eye badge (redraw,
+   * above) and the live cursor markers (updateCursor, below), so "whose color is
+   * this" always means the same thing everywhere on the table. */
+  private colorForPeer(peerId: string): string {
+    return this.playerColors.get(peerId) ?? "#888888";
   }
 
   private removeView(pileId: string): void {
@@ -665,6 +814,159 @@ export class TableApp implements TableView {
       [T.rotate90, () => this.rotatePiece90(pieceId)],
       [T.remove, () => this.doRemovePiece(pieceId)],
     ];
+    for (const [label, action] of items) {
+      const btn = document.createElement("button");
+      btn.textContent = label;
+      btn.onclick = () => {
+        action();
+        this.closeMenu();
+      };
+      menu.appendChild(btn);
+    }
+    document.body.appendChild(menu);
+    this.menuEl = menu;
+  }
+
+  // --- Wiring a MatState to an on-screen Container — see MatState's own doc comment
+  // (D26) for the two ways this differs from a Piece: it's added to `matsLayer`
+  // instead of `world` directly (so it always renders beneath every Card/Piece — see
+  // matsLayer's own doc comment), and every mutating action here is gated locally by
+  // `canLocallyModifyMat` when it's locked. That local gate is a UX nicety only — see
+  // `selfIsGm`'s doc comment for why the *real* enforcement lives host-side. ---
+
+  private canLocallyModifyMat(matId: string): boolean {
+    const mat = this.model.getMat(matId);
+    return !mat || !mat.locked || this.selfIsGm;
+  }
+
+  private mountMatView(mat: MatState): Container {
+    const view = new Container();
+    view.position.set(mat.x, mat.y);
+    view.rotation = mat.rotation;
+    view.eventMode = "static";
+    view.cursor = "grab";
+    view.on("pointerdown", (e: FederatedPointerEvent) => {
+      e.stopPropagation();
+      if (e.button === 2) return; // handled by rightclick below
+      this.beginDragMat(mat.id, e);
+    });
+    view.on("rightclick", (e: FederatedPointerEvent) => {
+      e.stopPropagation();
+      this.openMatMenu(mat.id, e.globalX, e.globalY);
+    });
+
+    const faceLayer = new Container();
+    renderMat(faceLayer, mat.def, mat.locked);
+    view.addChild(faceLayer);
+    this.matFaceLayers.set(mat.id, faceLayer);
+    view.addChild(this.makeMatRotateHandle(mat.id));
+
+    this.matsLayer.addChild(view);
+    this.matViews.set(mat.id, view);
+    return view;
+  }
+
+  private redrawMat(matId: string): void {
+    const mat = this.model.getMat(matId);
+    const faceLayer = this.matFaceLayers.get(matId);
+    if (!mat || !faceLayer) return;
+    renderMat(faceLayer, mat.def, mat.locked);
+  }
+
+  private makeMatRotateHandle(matId: string): Container {
+    const handle = new Graphics();
+    handle.circle(0, -(MAT_HEIGHT / 2 + 12), 5);
+    handle.fill({ color: 0xffffff, alpha: 0.6 });
+    handle.stroke({ width: 1, color: 0x1a1a1a });
+    handle.eventMode = "static";
+    handle.cursor = "grab";
+    handle.on("pointerdown", (e: FederatedPointerEvent) => {
+      e.stopPropagation();
+      if (!this.canLocallyModifyMat(matId)) return;
+      const view = this.matViews.get(matId);
+      if (view) this.rotatingMat = { matId, view, radians: view.rotation };
+    });
+    return handle;
+  }
+
+  private beginDragMat(matId: string, e: FederatedPointerEvent): void {
+    if (this.draggingMat || !this.canLocallyModifyMat(matId)) return;
+    const view = this.matViews.get(matId);
+    if (!view) return;
+    this.draggingMat = { matId, view };
+    view.alpha = 0.85;
+  }
+
+  private removeMatView(matId: string): void {
+    const view = this.matViews.get(matId);
+    if (view) {
+      this.matsLayer.removeChild(view);
+      this.matViews.delete(matId);
+      this.matFaceLayers.delete(matId);
+    }
+  }
+
+  private doRemoveMat(matId: string): void {
+    if (!this.canLocallyModifyMat(matId)) return;
+    if (this.syncClient) {
+      this.syncClient.sendRequest({ type: "remove-mat", matId });
+      return;
+    }
+    this.model.removeMat(matId);
+    this.removeMatView(matId);
+  }
+
+  private rotateMat90(matId: string): void {
+    if (!this.canLocallyModifyMat(matId)) return;
+    if (this.syncClient) {
+      this.syncClient.sendRequest({ type: "rotate-mat-by", matId, deltaRadians: Math.PI / 2 });
+      return;
+    }
+    this.model.rotateMat90(matId);
+    const mat = this.model.getMat(matId);
+    const view = this.matViews.get(matId);
+    if (mat && view) view.rotation = mat.rotation;
+  }
+
+  /** Locking/unlocking is always GM-only (docs/DECISIONS.md D26) regardless of the
+   * mat's current state — enforced for real host-side (net/syncProtocol.ts's
+   * "set-mat-locked"); gated here too so a non-GM's own menu doesn't even offer an
+   * action that would just get silently rejected. */
+  private toggleMatLocked(matId: string): void {
+    if (!this.selfIsGm) return;
+    const mat = this.model.getMat(matId);
+    if (!mat) return;
+    const locked = !mat.locked;
+    if (this.syncClient) {
+      this.syncClient.sendRequest({ type: "set-mat-locked", matId, locked });
+      return;
+    }
+    this.model.setMatLocked(matId, locked);
+    this.redrawMat(matId);
+  }
+
+  /** The right-click menu for a Mat — rotate/remove (omitted entirely for a locked
+   * mat unless this client is the GM), plus a GM-only lock/unlock toggle always shown
+   * so the GM has somewhere to unlock one again. */
+  private openMatMenu(matId: string, screenX: number, screenY: number): void {
+    this.closeMenu();
+    const mat = this.model.getMat(matId);
+    if (!mat) return;
+    const canModify = this.canLocallyModifyMat(matId);
+
+    const menu = document.createElement("div");
+    menu.className = "card-menu";
+    menu.style.left = `${screenX}px`;
+    menu.style.top = `${screenY}px`;
+
+    const items: [string, () => void][] = [];
+    if (canModify) {
+      items.push([T.rotate90, () => this.rotateMat90(matId)]);
+      items.push([T.remove, () => this.doRemoveMat(matId)]);
+    }
+    if (this.selfIsGm) {
+      items.push([mat.locked ? T.unlockMat : T.lockMat, () => this.toggleMatLocked(matId)]);
+    }
     for (const [label, action] of items) {
       const btn = document.createElement("button");
       btn.textContent = label;
@@ -825,7 +1127,7 @@ export class TableApp implements TableView {
   // --- Dragging ---
 
   private beginDrag(pileId: string, e: FederatedPointerEvent): void {
-    if (this.dragging || this.groupDragging) return;
+    if (this.dragging || this.groupDragging || this.draggingWholePile) return;
 
     // Dragging a pile that's part of a 2+ selection moves the whole group together
     // instead — see beginGroupDrag and the selectedPileIds field comment.
@@ -973,12 +1275,23 @@ export class TableApp implements TableView {
       } else {
         this.maybeSendDragHint(this.dragging.pileId, local.x, local.y);
       }
+    } else if (this.draggingWholePile) {
+      this.draggingWholePile.x = local.x;
+      this.draggingWholePile.y = local.y;
+      this.draggingWholePile.view.position.set(local.x, local.y);
+      this.maybeSendDragHint(this.draggingWholePile.pileId, local.x, local.y);
     } else if (this.rotatingPiece) {
       const angle = Math.atan2(local.x - this.rotatingPiece.view.position.x, -(local.y - this.rotatingPiece.view.position.y));
       this.rotatingPiece.radians = angle;
       this.rotatingPiece.view.rotation = angle;
     } else if (this.draggingPiece) {
       this.draggingPiece.view.position.set(local.x, local.y);
+    } else if (this.rotatingMat) {
+      const angle = Math.atan2(local.x - this.rotatingMat.view.position.x, -(local.y - this.rotatingMat.view.position.y));
+      this.rotatingMat.radians = angle;
+      this.rotatingMat.view.rotation = angle;
+    } else if (this.draggingMat) {
+      this.draggingMat.view.position.set(local.x, local.y);
     }
   }
 
@@ -1070,6 +1383,30 @@ export class TableApp implements TableView {
       const { x, y } = view.position;
       if (this.syncClient) this.syncClient.sendRequest({ type: "move-piece", pieceId, x, y });
       else this.model.movePiece(pieceId, x, y);
+    }
+
+    if (this.draggingWholePile) {
+      const { pileId, view, x, y } = this.draggingWholePile;
+      this.draggingWholePile = null;
+      view.alpha = 1;
+      if (this.syncClient) this.syncClient.sendRequest({ type: "move-pile", pileId, x, y });
+      else this.model.movePile(pileId, x, y);
+    }
+
+    if (this.rotatingMat) {
+      const { matId, radians } = this.rotatingMat;
+      this.rotatingMat = null;
+      if (this.syncClient) this.syncClient.sendRequest({ type: "set-mat-rotation", matId, radians });
+      else this.model.setMatRotation(matId, radians);
+    }
+
+    if (this.draggingMat) {
+      const { matId, view } = this.draggingMat;
+      this.draggingMat = null;
+      view.alpha = 1;
+      const { x, y } = view.position;
+      if (this.syncClient) this.syncClient.sendRequest({ type: "move-mat", matId, x, y });
+      else this.model.moveMat(matId, x, y);
     }
 
     if (!this.dragging) return;

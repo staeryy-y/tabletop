@@ -516,9 +516,10 @@ button.hud-icon-button.active {
   padding: 6px 4px;
 }
 
-/* The starting-layout preview (GamePackageEditor.tsx's StartingLayoutPreview) — a small
-   draggable map of where each card set's stack starts on the table, per the explicit
-   request to configure this "visually" rather than as plain coordinate fields. */
+/* The game-package editor's "Layout" tab (GamePackageEditor.tsx's LayoutTab) — one
+   shared draggable map of where every card/piece/mat set starts on the table, per the
+   explicit request to configure this "visually" rather than as plain coordinate
+   fields, and to have one dedicated place to arrange all of them together. */
 .layout-preview {
   position: relative;
   width: 100%;
@@ -554,6 +555,76 @@ button.hud-icon-button.active {
 
 .layout-preview-token:active {
   cursor: grabbing;
+}
+
+/* Color-coded per family so the shared canvas still reads as "three kinds of thing,"
+   not just an undifferentiated pile of tokens — matches this file's existing palette
+   rather than introducing new colors (accent = cards, matching the single-family
+   preview this replaced; green/brown read as "piece"/"mat" without needing a legend
+   to be usable at a glance, though one is still shown for clarity). */
+.layout-preview-token-piece {
+  background: #6fcf97;
+}
+
+.layout-preview-token-mat {
+  background: #b08968;
+}
+
+.layout-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  font-size: 0.8rem;
+}
+
+.layout-legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.layout-legend-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius);
+  border: 1px solid #1a1a1a;
+  background: var(--accent);
+}
+
+.layout-legend-swatch-piece {
+  background: #6fcf97;
+}
+
+.layout-legend-swatch-mat {
+  background: #b08968;
+}
+
+/* The game-package editor's tab bar (GamePackageEditor.tsx) — one tab per element
+   (tracks/dice/cards/pieces/mats/macros) plus a final Layout tab, replacing the old
+   single continuously-scrolling editor. */
+.editor-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 8px;
+}
+
+.editor-tab {
+  background: transparent;
+  color: var(--text);
+  border: 2px solid transparent;
+  opacity: 0.7;
+}
+
+.editor-tab.active {
+  background: var(--panel);
+  border-color: var(--border);
+  opacity: 1;
 }
 
 .editor-errors {

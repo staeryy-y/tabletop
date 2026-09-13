@@ -7,6 +7,7 @@
 // the rules this encodes: a Pile of one card *is* a Card; a Pile of more is a Stack;
 // there is no separate authored "deck" type.
 import { CardDef } from "./card";
+import { MatDef } from "./mat";
 import { PieceDef } from "./piece";
 
 export interface CardInstance {
@@ -29,16 +30,17 @@ export interface PileState {
 
 export type DropResult = { kind: "merged"; targetId: string } | { kind: "placed"; pile: PileState };
 
-/** The complete contents of a table — piles and pieces together — used wherever a full
- * snapshot needs to travel as one value: the client-side recovery store
+/** The complete contents of a table — piles, pieces, and mats together — used wherever
+ * a full snapshot needs to travel as one value: the client-side recovery store
  * (net/tableStore.ts), the signaling server's recovery blob (net/roomConnection.ts's
  * currentSnapshot/becomeHostFromMigration), and net/syncProtocol.ts's own "snapshot"
- * TableEvent (which spells the two fields out directly rather than nesting this type,
- * so `pieces` there can stay optional for old call sites — see that type's own doc
+ * TableEvent (which spells the fields out directly rather than nesting this type, so
+ * `pieces`/`mats` there can stay optional for old call sites — see that type's own doc
  * comment). */
 export interface TableSnapshot {
   piles: PileState[];
   pieces: PieceState[];
+  mats: MatState[];
 }
 
 /** A placed Piece — see docs/GAME_DEFINITION.md "Pieces: board tiles, terrain, and
@@ -55,11 +57,28 @@ export interface PieceState {
   def: PieceDef;
 }
 
+/** A placed Mat — see engine/mat.ts's doc comment and docs/DECISIONS.md D26. Same
+ * shape as a PieceState plus one addition: `locked`, which — enforced by the host in
+ * net/syncProtocol.ts, not here (this model has no concept of "who's asking") — means
+ * only the GM can move, rotate, or remove it while true. Always rendered beneath every
+ * Card/Piece, a rendering-layer concern (engine/table.ts's dedicated `matsLayer`), not
+ * something this model needs to know about at all. */
+export interface MatState {
+  readonly id: string;
+  x: number;
+  y: number;
+  rotation: number;
+  locked: boolean;
+  def: MatDef;
+}
+
 export class TableModel {
   private piles = new Map<string, PileState>();
   private nextId = 1;
   private pieces = new Map<string, PieceState>();
   private nextPieceId = 1;
+  private mats = new Map<string, MatState>();
+  private nextMatId = 1;
 
   private newId(): string {
     return `pile-${this.nextId++}`;
@@ -67,6 +86,10 @@ export class TableModel {
 
   private newPieceId(): string {
     return `piece-${this.nextPieceId++}`;
+  }
+
+  private newMatId(): string {
+    return `mat-${this.nextMatId++}`;
   }
 
   spawnCard(def: CardDef, x: number, y: number): PileState {
@@ -112,13 +135,15 @@ export class TableModel {
   /** Replace this model's entire contents — used to apply a full snapshot, e.g. when a
    * newly-promoted host resumes from the last one uploaded (see
    * docs/NETWORKING.md "Host migration") or a joining peer receives the current table
-   * state. `pieces` defaults to empty so every existing call site (and every existing
-   * test) that only ever knew about piles keeps working unchanged. */
-  loadSnapshot(piles: PileState[], pieces: PieceState[] = []): void {
+   * state. `pieces`/`mats` default to empty so every existing call site (and every
+   * existing test) that only ever knew about piles keeps working unchanged. */
+  loadSnapshot(piles: PileState[], pieces: PieceState[] = [], mats: MatState[] = []): void {
     this.piles.clear();
     for (const pile of piles) this.piles.set(pile.id, pile);
     this.pieces.clear();
     for (const piece of pieces) this.pieces.set(piece.id, piece);
+    this.mats.clear();
+    for (const mat of mats) this.mats.set(mat.id, mat);
   }
 
   topCard(id: string): CardInstance | undefined {
@@ -330,5 +355,67 @@ export class TableModel {
 
   rotatePiece90(id: string): void {
     this.rotatePieceBy(id, Math.PI / 2);
+  }
+
+  // --- Mats: see MatState's doc comment. Same shape of methods as Pieces above, plus
+  // setMatLocked — note that *enforcing* the lock (rejecting a non-GM's move/rotate/
+  // remove while locked) is deliberately not this model's job at all; it has no
+  // concept of "who's asking" to begin with. That check lives in
+  // net/syncProtocol.ts's HostTableSync, the one place that already knows both. ---
+
+  spawnMat(def: MatDef, x: number, y: number, locked = false): MatState {
+    const mat: MatState = { id: this.newMatId(), x, y, rotation: 0, locked, def };
+    this.mats.set(mat.id, mat);
+    return mat;
+  }
+
+  getMat(id: string): MatState | undefined {
+    return this.mats.get(id);
+  }
+
+  allMats(): MatState[] {
+    return [...this.mats.values()];
+  }
+
+  removeMat(id: string): void {
+    this.mats.delete(id);
+  }
+
+  /** Insert or overwrite a mat by the id it already carries — the mat equivalent of
+   * setPile()/setPiece(); see either's doc comment for why only the host ever
+   * allocates a fresh id. */
+  setMat(mat: MatState): void {
+    this.mats.set(mat.id, mat);
+  }
+
+  moveMat(id: string, x: number, y: number): void {
+    const mat = this.mats.get(id);
+    if (!mat) return;
+    mat.x = x;
+    mat.y = y;
+  }
+
+  rotateMatBy(id: string, deltaRadians: number): void {
+    const mat = this.mats.get(id);
+    if (!mat) return;
+    const twoPi = 2 * Math.PI;
+    mat.rotation = ((mat.rotation + deltaRadians) % twoPi + twoPi) % twoPi;
+  }
+
+  setMatRotation(id: string, radians: number): void {
+    const mat = this.mats.get(id);
+    if (!mat) return;
+    const twoPi = 2 * Math.PI;
+    mat.rotation = ((radians % twoPi) + twoPi) % twoPi;
+  }
+
+  rotateMat90(id: string): void {
+    this.rotateMatBy(id, Math.PI / 2);
+  }
+
+  setMatLocked(id: string, locked: boolean): void {
+    const mat = this.mats.get(id);
+    if (!mat) return;
+    mat.locked = locked;
   }
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { CardDef } from "../engine/card";
+import { MatDef } from "../engine/mat";
 import { TableSnapshot } from "../engine/pileModel";
 import { PieceDef } from "../engine/piece";
 import { TableApp } from "../engine/table";
@@ -11,7 +12,13 @@ import { TableStore } from "../net/tableStore";
 import { createEmptyPackage, GamePackage } from "../packages/gamePackage";
 import { fetchBundledPackage } from "../packages/gameDefinitionLoader";
 import { PackageStore } from "../packages/packageStore";
-import { defaultCardSetPosition, defaultPieceSetPosition, pieceEntryOffset } from "../packages/startingLayout";
+import {
+  defaultCardSetPosition,
+  defaultMatSetPosition,
+  defaultPieceSetPosition,
+  matEntryOffset,
+  pieceEntryOffset,
+} from "../packages/startingLayout";
 import { loadRoomToken } from "../roomToken";
 import { getRememberedRoomPackageId } from "../roomPackageChoice";
 import { UI_TEXT } from "../uiText";
@@ -91,6 +98,34 @@ function pieceSetSpawnsFromPackage(pkg: GamePackage): PieceSpawn[] {
   return spawns;
 }
 
+/** One individual mat's worth of spawn info — same "flattened, one entry per object"
+ * shape as PieceSpawn above, plus `locked` (docs/DECISIONS.md D26). */
+interface MatSpawn {
+  def: MatDef;
+  x: number;
+  y: number;
+  locked: boolean;
+}
+
+function matSetSpawnsFromPackage(pkg: GamePackage): MatSpawn[] {
+  const spawns: MatSpawn[] = [];
+  pkg.matSets.forEach((set, i) => {
+    const fallback = defaultMatSetPosition(i, pkg.matSets.length);
+    const anchorX = set.startX ?? fallback.x;
+    const anchorY = set.startY ?? fallback.y;
+    set.entries.forEach((entry, j) => {
+      const offset = matEntryOffset(j);
+      spawns.push({
+        def: { id: `${set.key}:${entry.id}`, image: entry.image, symbol: entry.symbol },
+        x: anchorX + offset.x,
+        y: anchorY + offset.y,
+        locked: entry.locked ?? false,
+      });
+    });
+  });
+  return spawns;
+}
+
 const packageStore = new PackageStore();
 const tableStore = new TableStore();
 
@@ -162,9 +197,16 @@ export function RoomTable({ slug }: { slug: string }) {
       seededRef.current.pkg = true;
       const cardSpawns = cardSetSpawnsFromPackage(loaded);
       const pieceSpawns = pieceSetSpawnsFromPackage(loaded);
-      if (cardSpawns.length === 0 && pieceSpawns.length === 0) {
+      const matSpawns = matSetSpawnsFromPackage(loaded);
+      if (cardSpawns.length === 0 && pieceSpawns.length === 0 && matSpawns.length === 0) {
         DEMO_DECK.forEach((def, i) => table.spawnCard(def, (i - 2.5) * 70, 150));
         return;
+      }
+      // Mats first — they always render beneath every card/piece regardless of spawn
+      // order (docs/DECISIONS.md D26), but laying them down before anything else
+      // matches how you'd actually set up a physical table.
+      for (const spawn of matSpawns) {
+        table.spawnMat(spawn.def, spawn.x, spawn.y, spawn.locked);
       }
       // Each card set spawns as one already-stacked pile (e.g. "a stack of all the
       // role cards" — not N separate individual piles), at the position the package
@@ -183,6 +225,12 @@ export function RoomTable({ slug }: { slug: string }) {
     const conn = new SignalingConnection(slug, token.token);
     connRef.current = conn;
     let mySelfId: string | null = null;
+    // GM identity is effectively fixed for the life of a connection (D13: it's
+    // attested once, from the room-owning account, at welcome time) — a plain closure
+    // variable, same pattern as mySelfId above, rather than React state, since
+    // RoomConnection needs a callback it can call anytime, including from inside a
+    // request that arrived well after this render (see D26's Mat-locking gate).
+    let gmPeerId: string | null = null;
 
     function persistSnapshotIfHost(): void {
       if (!roomConnRef.current?.isHost) return;
@@ -193,7 +241,7 @@ export function RoomTable({ slug }: { slug: string }) {
       // IndexedDB save below always happens regardless — that's not a "server
       // upload," it's this browser remembering its own table.
       if (!isAnonymousRoomRef.current) conn.send({ type: "snapshot", blob: snapshot });
-      void tableStore.save(slug, snapshot.piles, snapshot.pieces);
+      void tableStore.save(slug, snapshot.piles, snapshot.pieces, snapshot.mats);
     }
     const snapshotInterval = setInterval(persistSnapshotIfHost, SNAPSHOT_PERSIST_INTERVAL_MS);
     // Best-effort: also flush immediately when the tab is about to go away (reload,
@@ -207,19 +255,22 @@ export function RoomTable({ slug }: { slug: string }) {
     const unsubscribe = conn.on((event) => {
       if (event.type === "welcome") {
         mySelfId = event.peerId;
+        gmPeerId = event.gmPeerId;
         setSelfId(event.peerId);
         setHostId(event.hostPeerId);
         setGmId(event.gmPeerId);
         setRoomName(event.roomInfo.name);
         table.setSelfPeerId(event.peerId);
+        table.setSelfIsGm(event.gmPeerId === event.peerId);
         for (const p of event.peers) otherPeerIdsRef.current.add(p.peerId);
         setPeers((prev) => {
           const next = new Map(prev);
           for (const p of event.peers) next.set(p.peerId, p);
-          // Our own presence isn't in `peers` (that list is "everyone else") — the
-          // server doesn't echo it back on welcome, so seed a placeholder now;
-          // set-presence / a later presence-changed will fill in real values.
-          next.set(event.peerId, { peerId: event.peerId, name: token.displayName, isGM: event.gmPeerId === event.peerId, color: "#888888", eyesClosed: false });
+          // Our own presence isn't in `peers` (that list is "everyone else") — welcome
+          // carries it separately as `self`, notably the server's actual randomly
+          // assigned color (see net/signaling.ts's doc comment) rather than a made-up
+          // local placeholder that would disagree with what everyone else sees.
+          next.set(event.peerId, event.self);
           return next;
         });
 
@@ -228,7 +279,7 @@ export function RoomTable({ slug }: { slug: string }) {
         // Becoming host specifically waits for the `you-are-host` message below rather
         // than inferring it from hostPeerId === peerId here, since that's the message
         // that actually carries the resume snapshot.
-        const roomConn = new RoomConnection(table.getModel(), table, conn, event.peerId);
+        const roomConn = new RoomConnection(table.getModel(), table, conn, event.peerId, undefined, () => gmPeerId);
         roomConnRef.current = roomConn;
         isAnonymousRoomRef.current = event.roomInfo.isAnonymous;
 

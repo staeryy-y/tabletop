@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { defaultCardSetPosition, defaultPieceSetPosition, pieceEntryOffset } from "./startingLayout";
+import { defaultCardSetPosition, defaultMatSetPosition, defaultPieceSetPosition, matEntryOffset, pieceEntryOffset } from "./startingLayout";
 
 describe("defaultCardSetPosition", () => {
   it("centers a single set on the table", () => {
@@ -61,5 +61,32 @@ describe("pieceEntryOffset", () => {
     const offsets = Array.from({ length: 20 }, (_, i) => pieceEntryOffset(i));
     const keys = new Set(offsets.map((o) => `${o.x},${o.y}`));
     expect(keys.size).toBe(20);
+  });
+});
+
+describe("defaultMatSetPosition", () => {
+  it("centers a single set right on the table's origin — a Mat renders beneath everything else", () => {
+    expect(defaultMatSetPosition(0, 1)).toEqual({ x: 0, y: 0 });
+  });
+
+  it("spreads multiple sets evenly around x = 0, all on the same y", () => {
+    const positions = [0, 1, 2].map((i) => defaultMatSetPosition(i, 3));
+    expect(positions[1]).toEqual({ x: 0, y: 0 });
+    expect(positions[0].x).toBeLessThan(0);
+    expect(positions[2].x).toBeGreaterThan(0);
+    expect(positions[2].x - positions[1].x).toBe(positions[1].x - positions[0].x);
+    expect(new Set(positions.map((p) => p.y)).size).toBe(1);
+  });
+});
+
+describe("matEntryOffset", () => {
+  it("the first entry sits right at the anchor (zero offset)", () => {
+    expect(matEntryOffset(0)).toEqual({ x: 0, y: 0 });
+  });
+
+  it("fans out left-to-right in a single row — no two mats land on top of each other for the first 10 entries", () => {
+    const offsets = Array.from({ length: 10 }, (_, i) => matEntryOffset(i));
+    for (let i = 1; i < offsets.length; i++) expect(offsets[i].x).toBeGreaterThan(offsets[i - 1].x);
+    expect(new Set(offsets.map((o) => o.y)).size).toBe(1);
   });
 });

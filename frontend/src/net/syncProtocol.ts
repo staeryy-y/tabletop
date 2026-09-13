@@ -18,7 +18,8 @@
 // redacted pile is indistinguishable from an ordinary face-down one to whoever receives
 // it, the same way a physical secret is "secure" only because no one hands it around.
 import { CardDef } from "../engine/card";
-import { CardInstance, PieceState, PileState, TableModel } from "../engine/pileModel";
+import { MatDef } from "../engine/mat";
+import { CardInstance, MatState, PieceState, PileState, TableModel } from "../engine/pileModel";
 import { PieceDef } from "../engine/piece";
 
 export type TableRequest =
@@ -55,6 +56,23 @@ export type TableRequest =
   | { type: "rotate-piece-by"; pieceId: string; deltaRadians: number }
   | { type: "set-piece-rotation"; pieceId: string; radians: number }
   | { type: "remove-piece"; pieceId: string }
+  /** Spawn a standalone Mat (TableModel.spawnMat) — see engine/mat.ts's doc comment
+   * and docs/DECISIONS.md D26: a Mat is a Piece-shaped object that always renders
+   * beneath every Card/Piece, and can optionally start locked. */
+  | { type: "spawn-mat"; def: MatDef; x: number; y: number; locked?: boolean }
+  /** Every mutating Mat request below is rejected outright by HostTableSync (a silent
+   * no-op — see canModifyMat) if the mat is currently locked and the sender isn't the
+   * room's GM (docs/DECISIONS.md D26: "locked mats can only be moved by the GM") —
+   * unlike every other request in this file, which anyone can send per the
+   * no-ownership-lock trust model (docs/NETWORKING.md "Trust model"). */
+  | { type: "move-mat"; matId: string; x: number; y: number }
+  | { type: "rotate-mat-by"; matId: string; deltaRadians: number }
+  | { type: "set-mat-rotation"; matId: string; radians: number }
+  | { type: "remove-mat"; matId: string }
+  /** Locking/unlocking itself is *always* GM-only, regardless of the mat's current
+   * state — otherwise any player could simply unlock a GM-locked mat and then move it,
+   * making the lock meaningless. */
+  | { type: "set-mat-locked"; matId: string; locked: boolean }
   /** A coarse, throttled "here's roughly where I'm dragging this" update — purely
    * cosmetic, so other players see something moving during the gesture instead of it
    * teleporting on drop. Deliberately kept out of the touched/emitTouched machinery
@@ -77,19 +95,28 @@ export type TableEvent =
   | { type: "pile-removed"; pileId: string }
   | { type: "piece-upserted"; piece: PieceState }
   | { type: "piece-removed"; pieceId: string }
-  /** `pieces` is optional (not just possibly-empty) purely so every pre-existing
-   * literal of this event (tests, older code) that only ever knew about piles keeps
-   * type-checking unchanged — see PeerTableSync.applyEvent's `?? []` and
-   * TableModel.loadSnapshot's matching default parameter. */
-  | { type: "snapshot"; piles: PileState[]; pieces?: PieceState[] }
+  | { type: "mat-upserted"; mat: MatState }
+  | { type: "mat-removed"; matId: string }
+  /** `pieces`/`mats` are optional (not just possibly-empty) purely so every
+   * pre-existing literal of this event (tests, older code) that only ever knew about
+   * piles keeps type-checking unchanged — see PeerTableSync.applyEvent's `?? []` and
+   * TableModel.loadSnapshot's matching default parameters. */
+  | { type: "snapshot"; piles: PileState[]; pieces?: PieceState[]; mats?: MatState[] }
   | { type: "drag-hint"; pileId: string; x: number; y: number; byPeerId: string }
   | { type: "rotate-hint"; pileId: string; radians: number; byPeerId: string }
   | { type: "cursor-hint"; x: number; y: number; byPeerId: string };
 
 /** A pile as it should appear to `recipientPeerId` — unchanged unless the top card is
  * hidden from them, in which case its front is replaced by its back (and faceUp forced
- * false) so the payload itself carries no trace of the real content or even of the fact
- * that it's specially hidden, not just naturally face-down.
+ * false) so the payload itself never carries the real content to anyone but the hider.
+ *
+ * `hiddenBy` itself, unlike the front content, is deliberately *kept* rather than
+ * scrubbed (D25): everyone can see *that* a card is being secretly viewed and *by
+ * whom* (engine/table.ts draws a colored eye badge from it, tinted with that player's
+ * presence color), so the rest of the table knows when something's being kept from
+ * them and by whom, without the content itself ever leaking. This is a narrower
+ * privacy guarantee than the original "no trace at all" design — see D25 for why that
+ * was walked back.
  *
  * Known limitation, not solved here: a newly-promoted host (see NETWORKING.md "Host
  * migration") resumes from the *previous* host's snapshot, which necessarily contains
@@ -105,7 +132,7 @@ export function redactPileFor(pile: PileState, recipientPeerId: string): PileSta
   const top = pile.cards[pile.cards.length - 1];
   if (top.hiddenBy === null || top.hiddenBy === recipientPeerId) return pile;
 
-  const redactedTop: CardInstance = { def: { ...top.def, front: top.def.back }, faceUp: false, hiddenBy: null };
+  const redactedTop: CardInstance = { def: { ...top.def, front: top.def.back }, faceUp: false, hiddenBy: top.hiddenBy };
   return { ...pile, cards: [...pile.cards.slice(0, -1), redactedTop] };
 }
 
@@ -119,6 +146,13 @@ export class HostTableSync {
     private broadcast: Broadcast,
     /** Every currently-connected peerId, host included — who a broadcast reaches. */
     private recipients: () => string[],
+    /** The room's current GM peerId, or null if unknown/there isn't one (e.g. an
+     * anonymous room — D19) — used only to gate locked-Mat requests (D26). Defaults to
+     * "no GM known" so every pre-existing HostTableSync construction site (tests
+     * included) that never mentions Mats keeps working unchanged; with no GM known, a
+     * locked mat simply can't be moved by anyone, which is the safe direction to fail
+     * in rather than "everyone can." */
+    private getGmPeerId: () => string | null = () => null,
   ) {}
 
   /** `fromPeerId` is whoever asked for this — needed for toggle-hide (who's hiding it)
@@ -139,6 +173,7 @@ export class HostTableSync {
 
     const touched = new Set<string>();
     const touchedPieces = new Set<string>();
+    const touchedMats = new Set<string>();
 
     switch (req.type) {
       case "spawn": {
@@ -223,10 +258,55 @@ export class HostTableSync {
         this.model.removePiece(req.pieceId);
         touchedPieces.add(req.pieceId);
         break;
+      case "spawn-mat": {
+        const mat = this.model.spawnMat(req.def, req.x, req.y, req.locked ?? false);
+        touchedMats.add(mat.id);
+        break;
+      }
+      case "move-mat":
+        if (!this.canModifyMat(req.matId, fromPeerId)) return;
+        this.model.moveMat(req.matId, req.x, req.y);
+        touchedMats.add(req.matId);
+        break;
+      case "rotate-mat-by":
+        if (!this.canModifyMat(req.matId, fromPeerId)) return;
+        this.model.rotateMatBy(req.matId, req.deltaRadians);
+        touchedMats.add(req.matId);
+        break;
+      case "set-mat-rotation":
+        if (!this.canModifyMat(req.matId, fromPeerId)) return;
+        this.model.setMatRotation(req.matId, req.radians);
+        touchedMats.add(req.matId);
+        break;
+      case "remove-mat":
+        if (!this.canModifyMat(req.matId, fromPeerId)) return;
+        this.model.removeMat(req.matId);
+        touchedMats.add(req.matId);
+        break;
+      case "set-mat-locked":
+        // Locking/unlocking is always GM-only, regardless of current state — see this
+        // request's own doc comment in TableRequest.
+        if (fromPeerId !== this.getGmPeerId()) return;
+        this.model.setMatLocked(req.matId, req.locked);
+        touchedMats.add(req.matId);
+        break;
     }
 
     this.emitTouched(touched);
     this.emitTouchedPieces(touchedPieces);
+    this.emitTouchedMats(touchedMats);
+  }
+
+  /** True unless the mat is both real and locked by someone other than the GM — see
+   * this class's `getGmPeerId` doc comment. A mat that doesn't exist at all (a race
+   * with something else removing it) is treated as *modifiable*: there's no lock to
+   * enforce, and letting the request through is what lets emitTouchedMats correctly
+   * report it as already-removed to the caller, the same way every other object type's
+   * "mutate a nonexistent id" case works. */
+  private canModifyMat(matId: string, fromPeerId: string): boolean {
+    const mat = this.model.getMat(matId);
+    if (!mat) return true;
+    return !mat.locked || fromPeerId === this.getGmPeerId();
   }
 
   /** Relayed as-is to everyone *except* the sender (who's already showing it locally,
@@ -261,12 +341,24 @@ export class HostTableSync {
     }
   }
 
+  /** Same idea again, for Mats — no redaction (a Mat has no Hide concept either), so
+   * every recipient gets the identical event, same as emitTouchedPieces. */
+  private emitTouchedMats(matIds: Iterable<string>): void {
+    for (const matId of matIds) {
+      const mat = this.model.getMat(matId);
+      for (const recipient of this.recipients()) {
+        this.broadcast(recipient, mat ? { type: "mat-upserted", mat } : { type: "mat-removed", matId });
+      }
+    }
+  }
+
   /** The full current state, redacted per-recipient — for a newly-joined peer, or
    * re-sent after a shuffle/host-migration-adjacent event. */
   sendSnapshotTo(recipientPeerId: string): void {
     const piles = this.model.allPiles().map((p) => redactPileFor(p, recipientPeerId));
     const pieces = this.model.allPieces();
-    this.broadcast(recipientPeerId, { type: "snapshot", piles, pieces });
+    const mats = this.model.allMats();
+    this.broadcast(recipientPeerId, { type: "snapshot", piles, pieces, mats });
   }
 }
 
@@ -290,8 +382,14 @@ export class PeerTableSync {
       case "piece-removed":
         this.model.removePiece(event.pieceId);
         break;
+      case "mat-upserted":
+        this.model.setMat(event.mat);
+        break;
+      case "mat-removed":
+        this.model.removeMat(event.matId);
+        break;
       case "snapshot":
-        this.model.loadSnapshot(event.piles, event.pieces ?? []);
+        this.model.loadSnapshot(event.piles, event.pieces ?? [], event.mats ?? []);
         break;
       case "drag-hint":
       case "rotate-hint":
@@ -350,6 +448,24 @@ export class PeerTableSync {
   }
   removePiece(pieceId: string): void {
     this.sendToHost({ type: "remove-piece", pieceId });
+  }
+  spawnMat(def: MatDef, x: number, y: number, locked = false): void {
+    this.sendToHost({ type: "spawn-mat", def, x, y, locked });
+  }
+  moveMat(matId: string, x: number, y: number): void {
+    this.sendToHost({ type: "move-mat", matId, x, y });
+  }
+  rotateMatBy(matId: string, deltaRadians: number): void {
+    this.sendToHost({ type: "rotate-mat-by", matId, deltaRadians });
+  }
+  setMatRotation(matId: string, radians: number): void {
+    this.sendToHost({ type: "set-mat-rotation", matId, radians });
+  }
+  setMatLocked(matId: string, locked: boolean): void {
+    this.sendToHost({ type: "set-mat-locked", matId, locked });
+  }
+  removeMat(matId: string): void {
+    this.sendToHost({ type: "remove-mat", matId });
   }
   dragHint(pileId: string, x: number, y: number): void {
     this.sendToHost({ type: "drag-hint", pileId, x, y });

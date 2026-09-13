@@ -141,6 +141,33 @@ pieces:
     expect(pkg.pieceSets[0].entries[0]).toEqual({ id: "star", image: undefined, symbol: "⭐", connectors: undefined });
   });
 
+  it("maps mats: to matSets, flattening front.image onto the entry", () => {
+    const pkg = parseBundledYaml(`
+name: "Mats Test"
+mats:
+  - set: battlemats
+    entries:
+      - id: arena
+        front: { image: "assets/mats/arena.png" }
+        locked: true
+`);
+    expect(pkg.matSets).toEqual([
+      { key: "battlemats", entries: [{ id: "arena", image: "assets/mats/arena.png", symbol: undefined, locked: true }] },
+    ]);
+  });
+
+  it("a mat entry can also use a bare image/symbol without the front nesting", () => {
+    const pkg = parseBundledYaml(`
+name: "Mats Test 2"
+mats:
+  - set: zones
+    entries:
+      - id: zone1
+        symbol: "🟩"
+`);
+    expect(pkg.matSets[0].entries[0]).toEqual({ id: "zone1", image: undefined, symbol: "🟩", locked: undefined });
+  });
+
   it("defaults tracks/dice/cardSets/pieceSets/macros to empty arrays when omitted", () => {
     const pkg = parseBundledYaml('name: "Bare Minimum"');
     expect(pkg).toEqual(createEmptyPackage("Bare Minimum"));

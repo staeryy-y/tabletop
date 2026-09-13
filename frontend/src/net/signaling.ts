@@ -30,6 +30,12 @@ export type SignalingEvent =
       gmPeerId: string | null;
       roomInfo: RoomInfo;
       peers: Peer[];
+      /** This client's own presence — notably its randomly-assigned `color` (see
+       * app/signaling.py's DEFAULT_COLOR_PALETTE). A peer is never told about itself
+       * via "peer-joined" (that broadcast excludes the peer it's about), so this is
+       * the only way a joining client ever learns its own real color rather than
+       * having to make one up locally. */
+      self: Peer;
     }
   | { type: "you-are-host"; snapshot: unknown }
   | ({ type: "peer-joined" } & Peer)

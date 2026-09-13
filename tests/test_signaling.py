@@ -421,6 +421,20 @@ def test_ws_first_connection_becomes_host_and_room_owner_is_attested_as_gm(admin
         assert you_are_host == {"type": "you-are-host", "snapshot": None}
 
 
+def test_ws_welcome_includes_the_joiners_own_presence_so_it_learns_its_real_color(admin_client):
+    # A joiner is never told about itself via peer-joined (that broadcast excludes the
+    # peer it's about — see app/signaling.py), so without this it had no way to learn
+    # the random color the server actually assigned it.
+    slug = admin_client.post("/api/rooms", json={"name": "R"}).json()["slug"]
+    join = _join(admin_client, slug, "Alice")
+
+    with admin_client.websocket_connect(f"/ws/room/{slug}?token={join['token']}") as ws:
+        welcome = ws.receive_json()
+        assert welcome["self"]["peerId"] == welcome["peerId"]
+        assert welcome["self"]["name"] == "Alice"
+        assert welcome["self"]["color"] in signaling.DEFAULT_COLOR_PALETTE
+
+
 def test_ws_a_guest_without_the_owners_session_is_not_attested_as_gm(admin_client, second_client):
     slug = admin_client.post("/api/rooms", json={"name": "R"}).json()["slug"]
     join = _join(second_client, slug, "Bob")  # `second_client` has no session at all

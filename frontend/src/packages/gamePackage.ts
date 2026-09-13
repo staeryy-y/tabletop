@@ -63,6 +63,27 @@ export interface PieceSet {
   startY?: number;
 }
 
+export interface MatEntry {
+  id: string;
+  /** Same image-or-symbol duality as PieceEntry — see that type's own doc comment. */
+  image?: string;
+  symbol?: string;
+  /** Starts locked (only the GM can move/rotate/remove it — docs/DECISIONS.md D26) or
+   * unlocked (anyone can, like a Piece) when the room first spawns it. Undefined means
+   * unlocked, same as if this field didn't exist — a package authored before Mats
+   * existed at all obviously never sets it. */
+  locked?: boolean;
+}
+
+export interface MatSet {
+  key: string;
+  entries: MatEntry[];
+  /** Same anchor-point-for-fan-out idea as PieceSet.startX/startY — see that field's
+   * own doc comment; Mats never merge into a single stack any more than Pieces do. */
+  startX?: number;
+  startY?: number;
+}
+
 export interface TrackDef {
   key: string;
   label: string;
@@ -90,11 +111,12 @@ export interface GamePackage {
   dice: DiceDef[];
   cardSets: CardSet[];
   pieceSets: PieceSet[];
+  matSets: MatSet[];
   macros: MacroDef[];
 }
 
 export function createEmptyPackage(name: string): GamePackage {
-  return { name, tracks: [], dice: [], cardSets: [], pieceSets: [], macros: [] };
+  return { name, tracks: [], dice: [], cardSets: [], pieceSets: [], matSets: [], macros: [] };
 }
 
 const KEY_PATTERN = /^[a-z][a-z0-9_-]*$/;
@@ -158,6 +180,20 @@ export function validatePackage(pkg: GamePackage): string[] {
       }
       if (entry.image && entry.symbol) {
         errors.push(`A piece in set "${set.key}" (id "${entry.id}") has both an image and a symbol — pick one.`);
+      }
+    }
+  }
+
+  const matSetKeys = new Set<string>();
+  for (const set of pkg.matSets) {
+    if (matSetKeys.has(set.key)) errors.push(`Duplicate mat set key "${set.key}".`);
+    matSetKeys.add(set.key);
+    for (const entry of set.entries) {
+      if (!entry.image && !entry.symbol) {
+        errors.push(`A mat in set "${set.key}" (id "${entry.id}") needs either an image or a symbol.`);
+      }
+      if (entry.image && entry.symbol) {
+        errors.push(`A mat in set "${set.key}" (id "${entry.id}") has both an image and a symbol — pick one.`);
       }
     }
   }

@@ -28,7 +28,12 @@ export interface CardDef {
 
 export interface CardDisplay {
   face: CardFace;
-  eyeBadge: boolean;
+  /** Who has this card hidden, if anyone — never null when hiddenBy isn't, regardless
+   * of whether the viewer *is* that hider. See docs/DECISIONS.md D25: everyone can see
+   * *that* a card is being secretly viewed and *by whom* (a colored eye badge — see
+   * engine/table.ts's redraw), even though only the hider ever actually receives its
+   * true front content. */
+  hiddenByPeerId: string | null;
 }
 
 /** The pure decision behind a card's appearance — no PixiJS involved, so this is
@@ -39,14 +44,15 @@ export interface CardDisplay {
  * other viewer sees the back, also regardless of faceUp, exactly as if it were face-down
  * — this is what makes Hide correct once state is actually synced across peers (M6):
  * the host only ever sends the true front content to the hider (see
- * net/syncProtocol.ts's redaction), so a non-owner's client typically never even
- * *has* the real front to accidentally render — this function just encodes the same
- * rule for the hider's own client, which does have it. */
+ * net/syncProtocol.ts's redaction — the back is what a non-hider's client actually
+ * receives, so it never even *has* the real front to accidentally render), this
+ * function just encodes the same rule for the hider's own client, which does have it.
+ * `hiddenByPeerId` is returned either way (D25) — see CardDisplay's own doc comment. */
 export function resolveDisplay(def: CardDef, faceUp: boolean, hiddenBy: string | null, viewerPeerId: string): CardDisplay {
   if (hiddenBy !== null) {
-    return hiddenBy === viewerPeerId ? { face: def.front, eyeBadge: true } : { face: def.back, eyeBadge: false };
+    return { face: hiddenBy === viewerPeerId ? def.front : def.back, hiddenByPeerId: hiddenBy };
   }
-  return { face: faceUp ? def.front : def.back, eyeBadge: false };
+  return { face: faceUp ? def.front : def.back, hiddenByPeerId: null };
 }
 
 // Image faces are loaded once (from a data: URI — see CardFace.image) and cached by
@@ -143,18 +149,27 @@ function drawImageFace(container: Container, texture: Texture): void {
   container.addChild(border);
 }
 
-function drawBadge(container: Container, badge: string): void {
+interface Badge {
+  text: string;
+  /** The badge's circle background color — 0x222222 (a plain neutral dark) for the
+   * pile-count badge, or a player's own presence color for the hidden-eye badge (D25:
+   * "the eye should have the color of the player" doing the hiding), so everyone can
+   * tell *whose* eye it is without it ever revealing the card's actual content. */
+  color: number | string;
+}
+
+function drawBadge(container: Container, badge: Badge): void {
   const b = new Graphics();
   b.circle(CARD_WIDTH / 2 - 12, -CARD_HEIGHT / 2 + 12, 10);
-  b.fill({ color: 0x222222 });
+  b.fill({ color: badge.color });
   container.addChild(b);
-  const bt = new Text({ text: badge, style: { fontFamily: "monospace", fontSize: 10, fill: 0xffffff } });
+  const bt = new Text({ text: badge.text, style: { fontFamily: "monospace", fontSize: 10, fill: 0xffffff } });
   bt.anchor.set(0.5);
   bt.position.set(CARD_WIDTH / 2 - 12, -CARD_HEIGHT / 2 + 12);
   container.addChild(bt);
 }
 
-function drawFace(container: Container, face: CardFace, badge?: string): void {
+function drawFace(container: Container, face: CardFace, badge?: Badge): void {
   container.removeChildren();
   const token = bumpRenderToken(container);
 
@@ -178,9 +193,25 @@ function drawFace(container: Container, face: CardFace, badge?: string): void {
   if (badge) drawBadge(container, badge);
 }
 
-/** Draw a card's current appearance into `container`, per resolveDisplay() above. */
-export function renderCard(container: Container, def: CardDef, faceUp: boolean, hiddenBy: string | null, viewerPeerId: string, pileCount: number): void {
-  const { face, eyeBadge } = resolveDisplay(def, faceUp, hiddenBy, viewerPeerId);
-  const badge = eyeBadge ? "\u{1F441}" : pileCount > 1 ? String(pileCount) : undefined;
+/** Draw a card's current appearance into `container`, per resolveDisplay() above.
+ * `colorForPeer` looks up a player's current presence color for the hidden-eye badge
+ * (D25) — engine/table.ts passes its own `playerColors` map; a peerId with no known
+ * color (e.g. they've since left) falls back to a plain neutral gray. */
+export function renderCard(
+  container: Container,
+  def: CardDef,
+  faceUp: boolean,
+  hiddenBy: string | null,
+  viewerPeerId: string,
+  pileCount: number,
+  colorForPeer: (peerId: string) => string,
+): void {
+  const { face, hiddenByPeerId } = resolveDisplay(def, faceUp, hiddenBy, viewerPeerId);
+  const badge: Badge | undefined =
+    hiddenByPeerId !== null
+      ? { text: "\u{1F441}", color: colorForPeer(hiddenByPeerId) }
+      : pileCount > 1
+        ? { text: String(pileCount), color: 0x222222 }
+        : undefined;
   drawFace(container, face, badge);
 }

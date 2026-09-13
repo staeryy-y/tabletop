@@ -70,6 +70,13 @@ export class RoomConnection {
     private signaling: SignalingLike,
     private selfPeerId: string,
     private makeLink: PeerLinkFactory = defaultLinkFactory,
+    /** The room's current GM peerId, or null — passed straight through to
+     * HostTableSync to gate locked-Mat requests (D26). A callback (not a plain value)
+     * since the caller (ui/RoomTable.tsx) learns/updates this from React state that
+     * can change after this RoomConnection is already constructed. Defaults to
+     * "unknown," matching HostTableSync's own default, so every existing call site
+     * that never mentions Mats/GM at all keeps working unchanged. */
+    private getGmPeerId: () => string | null = () => null,
   ) {}
 
   get isHost(): boolean {
@@ -83,10 +90,12 @@ export class RoomConnection {
   becomeHost(existingPeerIds: string[]): TableSyncClient {
     this.linkToHost?.close();
     this.linkToHost = null;
-    this.hostSync = new HostTableSync(this.model, (recipient, event) => this.deliver(recipient, event), () => [
-      this.selfPeerId,
-      ...this.peerLinks.keys(),
-    ]);
+    this.hostSync = new HostTableSync(
+      this.model,
+      (recipient, event) => this.deliver(recipient, event),
+      () => [this.selfPeerId, ...this.peerLinks.keys()],
+      this.getGmPeerId,
+    );
     for (const peerId of existingPeerIds) this.addPeer(peerId);
     return { sendRequest: (req) => this.hostSync!.handleRequest(this.selfPeerId, req) };
   }
@@ -177,7 +186,7 @@ export class RoomConnection {
    * docs/NETWORKING.md "Host migration" (app/signaling.py's `snapshot` message) — only
    * meaningful while this client is host. */
   currentSnapshot(): TableSnapshot {
-    return { piles: this.model.allPiles(), pieces: this.model.allPieces() };
+    return { piles: this.model.allPiles(), pieces: this.model.allPieces(), mats: this.model.allMats() };
   }
 
   /** This client was just promoted to host (docs/NETWORKING.md "Host migration"):
@@ -185,8 +194,8 @@ export class RoomConnection {
    * there wasn't one yet — a very short-lived room), then take on the host role for
    * whoever's still connected. */
   becomeHostFromMigration(snapshot: TableSnapshot | null, remainingPeerIds: string[]): TableSyncClient {
-    this.model.loadSnapshot(snapshot?.piles ?? [], snapshot?.pieces ?? []);
-    this.view.applyEvent({ type: "snapshot", piles: this.model.allPiles(), pieces: this.model.allPieces() });
+    this.model.loadSnapshot(snapshot?.piles ?? [], snapshot?.pieces ?? [], snapshot?.mats ?? []);
+    this.view.applyEvent({ type: "snapshot", piles: this.model.allPiles(), pieces: this.model.allPieces(), mats: this.model.allMats() });
     return this.becomeHost(remainingPeerIds);
   }
 

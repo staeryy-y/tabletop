@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CardSet, DiceDef, GamePackage, PieceSet, TrackDef, createEmptyPackage, isValidPackage, validatePackage } from "./gamePackage";
+import { CardSet, DiceDef, GamePackage, MatSet, PieceSet, TrackDef, createEmptyPackage, isValidPackage, validatePackage } from "./gamePackage";
 
 function pkg(overrides: Partial<GamePackage> = {}): GamePackage {
   return { ...createEmptyPackage("Test Package"), ...overrides };
@@ -13,6 +13,7 @@ describe("createEmptyPackage", () => {
     expect(p.dice).toEqual([]);
     expect(p.cardSets).toEqual([]);
     expect(p.pieceSets).toEqual([]);
+    expect(p.matSets).toEqual([]);
     expect(p.macros).toEqual([]);
   });
 
@@ -183,6 +184,42 @@ describe("validatePackage — piece sets", () => {
   it("flags duplicate piece set keys", () => {
     const errors = validatePackage(pkg({ pieceSets: [set(), set()] }));
     expect(errors).toContain('Duplicate piece set key "tokens".');
+  });
+});
+
+describe("validatePackage — mat sets", () => {
+  const set = (overrides: Partial<MatSet> = {}): MatSet => ({
+    key: "battlemat",
+    entries: [{ id: "m1", symbol: "🟩" }],
+    ...overrides,
+  });
+
+  it("accepts a mat with only a symbol", () => {
+    expect(validatePackage(pkg({ matSets: [set()] }))).toEqual([]);
+  });
+
+  it("accepts a mat with only an image", () => {
+    const errors = validatePackage(pkg({ matSets: [set({ entries: [{ id: "m1", image: "data:image/png;base64,x" }] })] }));
+    expect(errors).toEqual([]);
+  });
+
+  it("accepts a locked mat", () => {
+    expect(validatePackage(pkg({ matSets: [set({ entries: [{ id: "m1", symbol: "🟩", locked: true }] })] }))).toEqual([]);
+  });
+
+  it("rejects a mat with neither an image nor a symbol", () => {
+    const errors = validatePackage(pkg({ matSets: [set({ entries: [{ id: "m1" }] })] }));
+    expect(errors.some((e) => e.includes("needs either an image or a symbol"))).toBe(true);
+  });
+
+  it("rejects a mat with both an image and a symbol", () => {
+    const errors = validatePackage(pkg({ matSets: [set({ entries: [{ id: "m1", image: "data:image/png;base64,x", symbol: "X" }] })] }));
+    expect(errors.some((e) => e.includes("pick one"))).toBe(true);
+  });
+
+  it("flags duplicate mat set keys", () => {
+    const errors = validatePackage(pkg({ matSets: [set(), set()] }));
+    expect(errors).toContain('Duplicate mat set key "battlemat".');
   });
 });
 

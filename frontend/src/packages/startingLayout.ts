@@ -34,3 +34,23 @@ export function pieceEntryOffset(entryIndex: number): { x: number; y: number } {
   const spacing = 46;
   return { x: (entryIndex % columns) * spacing, y: Math.floor(entryIndex / columns) * spacing };
 }
+
+/** Where a mat set's anchor point sits when nothing has explicitly repositioned it —
+ * same idea as defaultPieceSetPosition, centered on the table's origin rather than
+ * offset above/below it like the card/piece rows: a Mat always renders beneath every
+ * Card/Piece (docs/DECISIONS.md D26), so starting it dead center, right where
+ * everything else already tends to land, is what actually makes it read as "a surface
+ * things get placed on" instead of an out-of-the-way decoration. */
+export function defaultMatSetPosition(index: number, total: number): { x: number; y: number } {
+  const spacing = 260;
+  return { x: (index - (total - 1) / 2) * spacing, y: 0 };
+}
+
+/** Individual mats within a set fan out horizontally from the set's anchor — mats
+ * never merge into a shared stack any more than pieces do. A single row (unlike
+ * pieceEntryOffset's grid) since a mat set is typically just a couple of large
+ * surfaces (e.g. two players' battle mats), not dozens of small tokens. */
+export function matEntryOffset(entryIndex: number): { x: number; y: number } {
+  const spacing = 240;
+  return { x: entryIndex * spacing, y: 0 };
+}

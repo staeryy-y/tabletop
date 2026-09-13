@@ -462,3 +462,86 @@ not decrease it (which slides the table up, revealing what's below — backward)
 four directions (`up`/`down`/`left`/`right`) had this inverted; fixed by flipping the
 sign of each in `stepCamera`, with `camera.test.ts`'s direction assertions updated to
 match the corrected (intended) behavior rather than the previously-shipped one.
+
+## D25 — Hiding a card now shows *who*, via a colored eye badge — not just *that*
+
+D3/D-adjacent redaction originally scrubbed `hiddenBy` to `null` for anyone but the
+hider, on the theory that a physical secret leaks nothing about its own existence to
+bystanders. Explicit feedback walked this back: "the fact that someone other player is
+hiding the cards should be visible, with an eye symbol on the card... The eye should
+have the color of the player playing." The content itself is still never leaked —
+`net/syncProtocol.ts`'s `redactPileFor` still swaps front for back for anyone but the
+hider — but `hiddenBy` itself now survives redaction unchanged, so every viewer can
+render a small eye badge tinted with the hider's own presence color
+(`engine/card.ts`'s `renderCard`, given a `colorForPeer` lookup by `engine/table.ts`).
+
+This is a real, intentional narrowing of the privacy guarantee, not a bug fix: everyone
+at the table now knows *someone* is peeking at a given card and *who*, just not *what*
+they see — closer to a player physically cupping their hand around a card (visible to
+everyone that they're doing it) than a card that's simply face-down. `resolveDisplay`
+(card.ts) was reshaped to always return `hiddenByPeerId` (never a bare boolean) to make
+this the only sane way to call it going forward.
+
+## D26 — Mats: a Piece-shaped object that always renders on the bottom, and can lock
+
+Requested: a new object type representing a flat physical mat (a battle mat, a card
+game's playmat) — behaves like a Piece (no flip, no hide, no stack/merge — see D21's
+piece/pile split for why that split exists at all) with two differences: it always
+renders beneath every Card/Piece, and it can be locked so only the GM can move/rotate/
+remove it.
+
+**Z-order** is solved with a dedicated `matsLayer` Container (`engine/table.ts`), added
+to `world` once, before any Card/Piece view ever is — draw order alone then keeps every
+mat beneath everything else permanently, with no per-frame sorting: new mats are added
+inside `matsLayer` (never reordering `world`'s own children), and new Cards/Pieces
+always get appended directly to `world`, after `matsLayer` is already there.
+
+**The lock** is enforced host-side, not just in the UI, matching this project's
+existing "the host is the real authority" pattern (D3 and, more specifically, D13's
+GM-follows-owning-account attestation): `net/syncProtocol.ts`'s `HostTableSync` gained
+a `getGmPeerId` callback (default: unknown, so an unrecognized/anonymous room's locked
+mat simply can't be moved by anyone — the safe direction to fail in) and rejects a
+locked mat's move/rotate/remove outright — a true no-op, no broadcast at all — from
+anyone but the GM. Locking/unlocking itself is *always* GM-only regardless of the mat's
+current state, closing the obvious loophole (anyone unlocking a GM-locked mat, then
+moving it). `engine/table.ts` also gates the same actions locally (`selfIsGm`,
+`canLocallyModifyMat`) purely as a UX nicety — instant, honest feedback (a non-GM's own
+right-click menu doesn't even offer "Rotate"/"Remove" on a locked mat) — never the
+actual enforcement, which stays host-side, same division of labor as everywhere else in
+this file.
+
+## D27 — The game-package editor is now tabbed, with a shared "Layout" tab
+
+Requested repeatedly: one tab per element (tracks, dice, cards, pieces, mats, macros)
+instead of one long continuously-scrolling page, plus a dedicated tab for arranging
+every set's starting position in one place. The old per-family "starting layout
+preview" lived only inside the card-sets tab (`StartingLayoutPreview`, positioning card
+sets only) — piece sets and mat sets had no visual way to be positioned at all, only
+falling back to their auto-spread defaults.
+
+`GamePackageEditor.tsx` now renders exactly one tab's content at a time from a plain
+`activeTab` union, all still backed by the same in-memory `pkg` value (switching tabs
+never loses unsaved edits to another one — there's nothing to lose, since nothing is
+unmounted-and-remounted, just conditionally rendered). The old single-family preview
+was replaced by `LayoutTab`, a generalized version covering all three set families at
+once in one shared canvas: each draggable token represents one *set's* anchor point
+(`CardSet`/`PieceSet`/`MatSet`'s own `startX`/`startY`), color-coded by family, since a
+family's individual entries always fan out from that one anchor
+(`packages/startingLayout.ts`'s per-family offset math) rather than each having its own
+independently-draggable position — dragging every individual card/piece/mat separately
+would be a much fussier interaction for a want that's really "roughly where does this
+group start."
+
+## D28 — A separate grip handle drags a whole stack; the card body still splits one off
+
+Dragging a multi-card pile by its body has always pulled just the top card off,
+leaving the remainder behind (`pick-up-and-drop`'s split-on-pickup — see its own doc
+comment) — explicitly confirmed as the wanted *default*. What was missing was any way
+to relocate an entire stack as one unit without pulling it apart card by card.
+`engine/table.ts` gained a second, small grip handle below every pile (mirroring the
+existing rotate handle above it) that starts a `draggingWholePile` gesture instead:
+`TableModel.movePile` — the same no-split, no-merge reposition multi-select's group
+drag already uses (D20) — rather than `pick-up-and-drop`. Shown on every pile
+regardless of size (not just multi-card ones) since hiding/showing it as a pile grows
+or shrinks would be one more thing to keep in sync for no real benefit — on a
+single-card pile it just behaves identically to a normal drag.

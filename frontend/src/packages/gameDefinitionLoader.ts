@@ -4,7 +4,7 @@
 // custom package built in the editor (gamePackage.ts's schema: camelCase,
 // `cardSets`/`pieceSets`). Nothing downstream needs to know which source it came from.
 import yaml from "js-yaml";
-import { CardEntry, CardSet, DiceDef, GamePackage, MacroDef, PieceEntry, PieceSet, TrackDef, createEmptyPackage } from "./gamePackage";
+import { CardEntry, CardSet, DiceDef, GamePackage, MacroDef, MatEntry, MatSet, PieceEntry, PieceSet, TrackDef, createEmptyPackage } from "./gamePackage";
 
 export class GameDefinitionError extends Error {}
 
@@ -55,6 +55,17 @@ interface YamlPieceSet {
   set: string;
   entries: YamlPieceEntry[];
 }
+interface YamlMatEntry {
+  id: string;
+  front?: YamlFace;
+  image?: string;
+  symbol?: string;
+  locked?: boolean;
+}
+interface YamlMatSet {
+  set: string;
+  entries: YamlMatEntry[];
+}
 interface YamlTrack {
   key: string;
   label?: string;
@@ -69,6 +80,7 @@ interface YamlDocument {
   dice?: { key: string; sides?: number; faces?: number[] }[];
   cards?: YamlCardSet[];
   pieces?: YamlPieceSet[];
+  mats?: YamlMatSet[];
   macros?: MacroDef[];
 }
 
@@ -105,6 +117,14 @@ function mapPieceSet(s: YamlPieceSet): PieceSet {
   return { key: s.set, entries: s.entries.map(mapPieceEntry) };
 }
 
+function mapMatEntry(e: YamlMatEntry): MatEntry {
+  return { id: e.id, image: e.image ?? e.front?.image, symbol: e.symbol, locked: e.locked };
+}
+
+function mapMatSet(s: YamlMatSet): MatSet {
+  return { key: s.set, entries: s.entries.map(mapMatEntry) };
+}
+
 /** Parse a bundled game definition's YAML text (docs/GAME_DEFINITION.md's schema) into
  * the same GamePackage shape a custom, editor-built package already uses. */
 export function parseBundledYaml(text: string): GamePackage {
@@ -123,6 +143,7 @@ export function parseBundledYaml(text: string): GamePackage {
     dice: (doc.dice ?? []).map(mapDie),
     cardSets: (doc.cards ?? []).map(mapCardSet),
     pieceSets: (doc.pieces ?? []).map(mapPieceSet),
+    matSets: (doc.mats ?? []).map(mapMatSet),
     macros: doc.macros ?? [],
   };
 }

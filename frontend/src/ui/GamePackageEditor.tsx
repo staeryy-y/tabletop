@@ -5,13 +5,15 @@ import {
   DiceDef,
   GamePackage,
   MacroDef,
+  MatEntry,
+  MatSet,
   PieceEntry,
   PieceSet,
   TrackDef,
   validatePackage,
 } from "../packages/gamePackage";
 import { readImageAsDataUrl } from "../packages/imageUpload";
-import { defaultCardSetPosition } from "../packages/startingLayout";
+import { defaultCardSetPosition, defaultMatSetPosition, defaultPieceSetPosition } from "../packages/startingLayout";
 import { UI_TEXT } from "../uiText";
 
 const T = UI_TEXT.gamePackageEditor;
@@ -32,6 +34,14 @@ function parseNumberList(text: string): number[] {
     .filter((n) => !Number.isNaN(n));
 }
 
+/** One tab per element, plus a final "Layout" tab for arranging every card/piece/mat
+ * set's spawn position in one place — the explicit, long-standing request this
+ * replaces the old single continuously-scrolling editor with (docs/DECISIONS.md D27).
+ * Kept as a plain union + array (not, say, a routed sub-page) since a package is
+ * edited as one in-memory `pkg` value regardless of which tab is showing — switching
+ * tabs never loses unsaved changes to another one. */
+type TabKey = "tracks" | "dice" | "cards" | "pieces" | "mats" | "macros" | "layout";
+
 export function GamePackageEditor({
   initial,
   onSave,
@@ -42,11 +52,22 @@ export function GamePackageEditor({
   onCancel: () => void;
 }) {
   const [pkg, setPkg] = useState<GamePackage>(initial);
+  const [activeTab, setActiveTab] = useState<TabKey>("cards");
   const errors = validatePackage(pkg);
 
   function update(patch: Partial<GamePackage>) {
     setPkg((p) => ({ ...p, ...patch }));
   }
+
+  const tabs: { key: TabKey; label: string }[] = [
+    { key: "tracks", label: T.tabs.tracks },
+    { key: "dice", label: T.tabs.dice },
+    { key: "cards", label: T.tabs.cards },
+    { key: "pieces", label: T.tabs.pieces },
+    { key: "mats", label: T.tabs.mats },
+    { key: "macros", label: T.tabs.macros },
+    { key: "layout", label: T.tabs.layout },
+  ];
 
   return (
     <div class="editor">
@@ -55,11 +76,30 @@ export function GamePackageEditor({
         <input value={pkg.name} onInput={(e) => update({ name: (e.target as HTMLInputElement).value })} />
       </label>
 
-      <TracksEditor tracks={pkg.tracks} dice={pkg.dice} onChange={(tracks) => update({ tracks })} />
-      <DiceEditor dice={pkg.dice} onChange={(dice) => update({ dice })} />
-      <CardSetsEditor cardSets={pkg.cardSets} onChange={(cardSets) => update({ cardSets })} />
-      <PieceSetsEditor pieceSets={pkg.pieceSets} onChange={(pieceSets) => update({ pieceSets })} />
-      <MacrosEditor macros={pkg.macros} onChange={(macros) => update({ macros })} />
+      <div class="editor-tabs" role="tablist">
+        {tabs.map((tab) => (
+          <button key={tab.key} type="button" role="tab" aria-selected={activeTab === tab.key} class={"editor-tab" + (activeTab === tab.key ? " active" : "")} onClick={() => setActiveTab(tab.key)}>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "tracks" && <TracksEditor tracks={pkg.tracks} dice={pkg.dice} onChange={(tracks) => update({ tracks })} />}
+      {activeTab === "dice" && <DiceEditor dice={pkg.dice} onChange={(dice) => update({ dice })} />}
+      {activeTab === "cards" && <CardSetsEditor cardSets={pkg.cardSets} onChange={(cardSets) => update({ cardSets })} />}
+      {activeTab === "pieces" && <PieceSetsEditor pieceSets={pkg.pieceSets} onChange={(pieceSets) => update({ pieceSets })} />}
+      {activeTab === "mats" && <MatSetsEditor matSets={pkg.matSets} onChange={(matSets) => update({ matSets })} />}
+      {activeTab === "macros" && <MacrosEditor macros={pkg.macros} onChange={(macros) => update({ macros })} />}
+      {activeTab === "layout" && (
+        <LayoutTab
+          cardSets={pkg.cardSets}
+          pieceSets={pkg.pieceSets}
+          matSets={pkg.matSets}
+          onMoveCardSet={(i, patch) => update({ cardSets: pkg.cardSets.map((s, idx) => (idx === i ? { ...s, ...patch } : s)) })}
+          onMovePieceSet={(i, patch) => update({ pieceSets: pkg.pieceSets.map((s, idx) => (idx === i ? { ...s, ...patch } : s)) })}
+          onMoveMatSet={(i, patch) => update({ matSets: pkg.matSets.map((s, idx) => (idx === i ? { ...s, ...patch } : s)) })}
+        />
+      )}
 
       {errors.length > 0 && (
         <div class="editor-errors">
@@ -201,6 +241,147 @@ function DiceEditor({ dice, onChange }: { dice: DiceDef[]; onChange: (d: DiceDef
   );
 }
 
+/** Coordinates map onto the same world-coordinate range engine/table.ts actually spawns
+ * things in; a set that's never been dragged shows at the same auto-spread position
+ * the runtime would use for it (startingLayout.ts), so this preview and the real room
+ * always agree. */
+const LAYOUT_WORLD_WIDTH = 900;
+const LAYOUT_WORLD_HEIGHT = 640;
+
+/** One draggable token in the Layout tab's shared preview canvas — one per card set,
+ * piece set, or mat set (never per individual card/piece/mat: a set's *entries* fan
+ * out from wherever its one token ends up, per packages/startingLayout.ts's own
+ * per-family offset math). `key` is globally unique across all three families so it
+ * can be used directly as this token's identity while dragging. */
+interface LayoutToken {
+  key: string;
+  label: string;
+  kind: "card" | "piece" | "mat";
+  x: number;
+  y: number;
+  onMove: (x: number, y: number) => void;
+}
+
+/** A single shared draggable map of where every card/piece/mat set starts when the
+ * room first starts — the explicit "the tab where you order all the pieces" request,
+ * replacing the old per-tab preview embedded only in the card-sets editor (which had
+ * no way to position piece/mat sets visually at all). Dragging a token only ever moves
+ * *that set's* anchor point (CardSet/PieceSet/MatSet's own startX/startY) — see
+ * LayoutToken's own doc comment for why a whole set, not each individual entry, is
+ * what's draggable here. */
+function LayoutTab({
+  cardSets,
+  pieceSets,
+  matSets,
+  onMoveCardSet,
+  onMovePieceSet,
+  onMoveMatSet,
+}: {
+  cardSets: CardSet[];
+  pieceSets: PieceSet[];
+  matSets: MatSet[];
+  onMoveCardSet: (i: number, patch: Partial<CardSet>) => void;
+  onMovePieceSet: (i: number, patch: Partial<PieceSet>) => void;
+  onMoveMatSet: (i: number, patch: Partial<MatSet>) => void;
+}) {
+  const t = T.layoutTab;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
+
+  const tokens: LayoutToken[] = [
+    ...cardSets.map((set, i): LayoutToken => {
+      const fallback = defaultCardSetPosition(i, cardSets.length);
+      return {
+        key: `card:${set.key}`,
+        label: set.label || set.key,
+        kind: "card",
+        x: set.startX ?? fallback.x,
+        y: set.startY ?? fallback.y,
+        onMove: (x, y) => onMoveCardSet(i, { startX: x, startY: y }),
+      };
+    }),
+    ...pieceSets.map((set, i): LayoutToken => {
+      const fallback = defaultPieceSetPosition(i, pieceSets.length);
+      return {
+        key: `piece:${set.key}`,
+        label: set.key,
+        kind: "piece",
+        x: set.startX ?? fallback.x,
+        y: set.startY ?? fallback.y,
+        onMove: (x, y) => onMovePieceSet(i, { startX: x, startY: y }),
+      };
+    }),
+    ...matSets.map((set, i): LayoutToken => {
+      const fallback = defaultMatSetPosition(i, matSets.length);
+      return {
+        key: `mat:${set.key}`,
+        label: set.key,
+        kind: "mat",
+        x: set.startX ?? fallback.x,
+        y: set.startY ?? fallback.y,
+        onMove: (x, y) => onMoveMatSet(i, { startX: x, startY: y }),
+      };
+    }),
+  ];
+
+  function moveTo(key: string, clientX: number, clientY: number) {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const relX = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    const relY = Math.min(1, Math.max(0, (clientY - rect.top) / rect.height));
+    const token = tokens.find((tk) => tk.key === key);
+    token?.onMove(Math.round(relX * LAYOUT_WORLD_WIDTH - LAYOUT_WORLD_WIDTH / 2), Math.round(relY * LAYOUT_WORLD_HEIGHT - LAYOUT_WORLD_HEIGHT / 2));
+  }
+
+  return (
+    <Section title={t.sectionTitle}>
+      {tokens.length === 0 ? (
+        <p class="hint">{t.emptyHint}</p>
+      ) : (
+        <>
+          <p class="hint">{t.hint}</p>
+          <div
+            class="layout-preview"
+            ref={containerRef}
+            onPointerMove={(e) => dragging !== null && moveTo(dragging, e.clientX, e.clientY)}
+            onPointerUp={() => setDragging(null)}
+            onPointerLeave={() => setDragging(null)}
+          >
+            {tokens.map((token) => {
+              const left = ((token.x + LAYOUT_WORLD_WIDTH / 2) / LAYOUT_WORLD_WIDTH) * 100;
+              const top = ((token.y + LAYOUT_WORLD_HEIGHT / 2) / LAYOUT_WORLD_HEIGHT) * 100;
+              return (
+                <div
+                  key={token.key}
+                  class={`layout-preview-token layout-preview-token-${token.kind}`}
+                  style={{ left: `${left}%`, top: `${top}%` }}
+                  onPointerDown={(e) => {
+                    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+                    setDragging(token.key);
+                  }}
+                >
+                  {token.label}
+                </div>
+              );
+            })}
+          </div>
+          <ul class="layout-legend">
+            <li>
+              <span class="layout-legend-swatch layout-legend-swatch-card" /> {t.cardsLegend}
+            </li>
+            <li>
+              <span class="layout-legend-swatch layout-legend-swatch-piece" /> {t.piecesLegend}
+            </li>
+            <li>
+              <span class="layout-legend-swatch layout-legend-swatch-mat" /> {t.matsLegend}
+            </li>
+          </ul>
+        </>
+      )}
+    </Section>
+  );
+}
+
 function CardSetsEditor({ cardSets, onChange }: { cardSets: CardSet[]; onChange: (c: CardSet[]) => void }) {
   const t = T.cardSets;
 
@@ -216,7 +397,6 @@ function CardSetsEditor({ cardSets, onChange }: { cardSets: CardSet[]; onChange:
 
   return (
     <Section title={t.sectionTitle}>
-      <StartingLayoutPreview cardSets={cardSets} onMove={updateSet} />
       {cardSets.map((set, i) => (
         <div class="editor-subsection" key={i}>
           <div class="editor-row">
@@ -233,71 +413,6 @@ function CardSetsEditor({ cardSets, onChange }: { cardSets: CardSet[]; onChange:
       ))}
       <button onClick={addSet}>{t.addSet}</button>
     </Section>
-  );
-}
-
-/** A small draggable map of where each card set's stack appears when the room first
- * starts — the "configure, visually, how the table should look on a new start" request.
- * Coordinates map onto the same world-coordinate range engine/table.ts actually spawns
- * things in (see LAYOUT_WORLD_WIDTH/HEIGHT below); a set that's never been dragged shows
- * at the same auto-spread position the runtime would use for it (startingLayout.ts),
- * so this preview and the real room always agree. */
-const LAYOUT_WORLD_WIDTH = 900;
-const LAYOUT_WORLD_HEIGHT = 640;
-
-function StartingLayoutPreview({ cardSets, onMove }: { cardSets: CardSet[]; onMove: (i: number, patch: Partial<CardSet>) => void }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [dragging, setDragging] = useState<number | null>(null);
-
-  if (cardSets.length === 0) return null;
-
-  function positionOf(i: number): { x: number; y: number } {
-    const set = cardSets[i];
-    if (set.startX !== undefined && set.startY !== undefined) return { x: set.startX, y: set.startY };
-    return defaultCardSetPosition(i, cardSets.length);
-  }
-
-  function moveTo(i: number, clientX: number, clientY: number) {
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const relX = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-    const relY = Math.min(1, Math.max(0, (clientY - rect.top) / rect.height));
-    onMove(i, {
-      startX: Math.round(relX * LAYOUT_WORLD_WIDTH - LAYOUT_WORLD_WIDTH / 2),
-      startY: Math.round(relY * LAYOUT_WORLD_HEIGHT - LAYOUT_WORLD_HEIGHT / 2),
-    });
-  }
-
-  return (
-    <div>
-      <p class="hint">{T.cardSets.layoutHint}</p>
-      <div
-        class="layout-preview"
-        ref={containerRef}
-        onPointerMove={(e) => dragging !== null && moveTo(dragging, e.clientX, e.clientY)}
-        onPointerUp={() => setDragging(null)}
-        onPointerLeave={() => setDragging(null)}
-      >
-        {cardSets.map((set, i) => {
-          const pos = positionOf(i);
-          const left = ((pos.x + LAYOUT_WORLD_WIDTH / 2) / LAYOUT_WORLD_WIDTH) * 100;
-          const top = ((pos.y + LAYOUT_WORLD_HEIGHT / 2) / LAYOUT_WORLD_HEIGHT) * 100;
-          return (
-            <div
-              key={set.key}
-              class="layout-preview-token"
-              style={{ left: `${left}%`, top: `${top}%` }}
-              onPointerDown={(e) => {
-                (e.target as HTMLElement).setPointerCapture(e.pointerId);
-                setDragging(i);
-              }}
-            >
-              {set.label || set.key}
-            </div>
-          );
-        })}
-      </div>
-    </div>
   );
 }
 
@@ -582,6 +697,161 @@ function PieceEntriesEditor({ entries, onChange }: { entries: PieceEntry[]; onCh
             setShowNewPiece(false);
           }}
           onCancel={() => setShowNewPiece(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function MatSetsEditor({ matSets, onChange }: { matSets: MatSet[]; onChange: (m: MatSet[]) => void }) {
+  const t = T.matSets;
+
+  function addSet() {
+    onChange([...matSets, { key: `mats${matSets.length + 1}`, entries: [] }]);
+  }
+  function updateSet(i: number, patch: Partial<MatSet>) {
+    onChange(matSets.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
+  }
+  function removeSet(i: number) {
+    onChange(matSets.filter((_, idx) => idx !== i));
+  }
+
+  return (
+    <Section title={t.sectionTitle}>
+      {matSets.map((set, i) => (
+        <div class="editor-subsection" key={i}>
+          <div class="editor-row">
+            <input class="key-input" value={set.key} placeholder={t.keyPlaceholder} onInput={(e) => updateSet(i, { key: (e.target as HTMLInputElement).value })} />
+            <button onClick={() => removeSet(i)}>{t.removeSet}</button>
+          </div>
+          <MatEntriesEditor entries={set.entries} onChange={(entries) => updateSet(i, { entries })} />
+        </div>
+      ))}
+      <button onClick={addSet}>{t.addSet}</button>
+    </Section>
+  );
+}
+
+/** The "+ Add mat" modal — same idea as NewPieceModal above, plus a "starts locked"
+ * checkbox (docs/DECISIONS.md D26). */
+function NewMatModal({ onCreate, onCancel }: { onCreate: (entry: MatEntry) => void; onCancel: () => void }) {
+  const t = T.matEntries;
+  const [symbol, setSymbol] = useState(t.newMatDefaultSymbol);
+  const [image, setImage] = useState<string | undefined>(undefined);
+  const [locked, setLocked] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function uploadImage(file: File | undefined) {
+    if (!file) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setImage(await readImageAsDataUrl(file));
+      setSymbol("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : T.readImageFailedFallback);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function create() {
+    onCreate({ id: freshId("mat"), symbol: image ? undefined : symbol || t.newMatDefaultSymbol, image, locked: locked || undefined });
+  }
+
+  return (
+    <Modal title={t.modalTitle} onClose={onCancel}>
+      <label>
+        {t.modalSymbolLabel}
+        <input
+          value={symbol}
+          placeholder={t.symbolPlaceholder}
+          maxLength={4}
+          onInput={(e) => {
+            setSymbol((e.target as HTMLInputElement).value);
+            setImage(undefined);
+          }}
+          autofocus
+        />
+      </label>
+      <label>
+        {t.modalImageLabel}
+        <input type="file" accept="image/*" onChange={(e) => uploadImage((e.target as HTMLInputElement).files?.[0])} />
+      </label>
+      <label class="checkbox">
+        <input type="checkbox" checked={locked} onChange={(e) => setLocked((e.target as HTMLInputElement).checked)} />
+        {t.startsLockedLabel}
+      </label>
+      {busy && <span class="hint">{t.readingHint}</span>}
+      {error && <p class="error">{error}</p>}
+      <div class="modal-actions">
+        <button onClick={onCancel}>{T.cancel}</button>
+        <button onClick={create}>{t.createButton}</button>
+      </div>
+    </Modal>
+  );
+}
+
+function MatEntriesEditor({ entries, onChange }: { entries: MatEntry[]; onChange: (e: MatEntry[]) => void }) {
+  const t = T.matEntries;
+  const [busy, setBusy] = useState<string | null>(null);
+  const [showNewMat, setShowNewMat] = useState(false);
+
+  function update(i: number, patch: Partial<MatEntry>) {
+    onChange(entries.map((e, idx) => (idx === i ? { ...e, ...patch } : e)));
+  }
+  function remove(i: number) {
+    onChange(entries.filter((_, idx) => idx !== i));
+  }
+  async function uploadImage(i: number, file: File | undefined) {
+    if (!file) return;
+    setBusy(entries[i].id);
+    try {
+      update(i, { image: await readImageAsDataUrl(file), symbol: undefined });
+    } catch (err) {
+      alert(err instanceof Error ? err.message : T.readImageFailedFallback);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div>
+      <div class="entry-grid">
+        {entries.map((entry, i) => (
+          <div class="entry-tile" key={entry.id}>
+            {entry.image ? (
+              <img class="entry-tile-preview piece-preview" src={entry.image} alt="" />
+            ) : (
+              <div class="entry-tile-preview piece-preview entry-tile-preview-symbol">{entry.symbol}</div>
+            )}
+            <input
+              value={entry.symbol ?? ""}
+              placeholder={t.symbolPlaceholder}
+              maxLength={4}
+              onInput={(e) => update(i, { symbol: (e.target as HTMLInputElement).value || undefined, image: (e.target as HTMLInputElement).value ? undefined : entry.image })}
+            />
+            <input type="file" accept="image/*" onChange={(e) => uploadImage(i, (e.target as HTMLInputElement).files?.[0])} />
+            <label class="checkbox">
+              <input type="checkbox" checked={entry.locked ?? false} onChange={(e) => update(i, { locked: (e.target as HTMLInputElement).checked || undefined })} />
+              {t.startsLockedLabel}
+            </label>
+            {busy === entry.id && <span class="hint">{t.readingHint}</span>}
+            <div class="entry-tile-actions">
+              <button onClick={() => remove(i)}>{t.remove}</button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <button onClick={() => setShowNewMat(true)}>{t.addMat}</button>
+      {showNewMat && (
+        <NewMatModal
+          onCreate={(entry) => {
+            onChange([...entries, entry]);
+            setShowNewMat(false);
+          }}
+          onCancel={() => setShowNewMat(false)}
         />
       )}
     </div>

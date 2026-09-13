@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CardDef } from "../engine/card";
+import { MatDef } from "../engine/mat";
 import { TableModel } from "../engine/pileModel";
 import { PieceDef } from "../engine/piece";
 import { HostTableSync, PeerTableSync, TableEvent, redactPileFor } from "./syncProtocol";
@@ -7,6 +8,7 @@ import { HostTableSync, PeerTableSync, TableEvent, redactPileFor } from "./syncP
 const DEF_A: CardDef = { id: "a", front: { title: "Secret Role: Evil", color: 1 }, back: { title: "", color: 9 } };
 const DEF_B: CardDef = { id: "b", front: { title: "B", color: 2 }, back: { title: "", color: 9 } };
 const PIECE_A: PieceDef = { id: "pa", symbol: "♟" };
+const MAT_A: MatDef = { id: "ma", symbol: "🟩" };
 
 // --- redactPileFor ---
 
@@ -24,7 +26,7 @@ describe("redactPileFor", () => {
     expect(redactPileFor(pile, "alice")).toEqual(pile);
   });
 
-  it("replaces the front with the back, and forces faceUp false, for anyone else", () => {
+  it("replaces the front with the back and forces faceUp false, but keeps hiddenBy visible (D25: everyone can see who's hiding it)", () => {
     const model = new TableModel();
     const pile = model.spawnCard(DEF_A, 0, 0);
     model.flip(pile.id); // face up, to prove redaction overrides this too
@@ -34,7 +36,7 @@ describe("redactPileFor", () => {
 
     expect(redacted.cards[0].faceUp).toBe(false);
     expect(redacted.cards[0].def.front).toEqual(DEF_A.back);
-    expect(redacted.cards[0].hiddenBy).toBeNull(); // no trace it was specially hidden at all
+    expect(redacted.cards[0].hiddenBy).toBe("alice"); // who's hiding it is visible; the content isn't
   });
 
   it("never leaks the real title/text through the redacted def", () => {
@@ -73,10 +75,10 @@ interface Sent {
   event: TableEvent;
 }
 
-function makeHost(recipients: string[]) {
+function makeHost(recipients: string[], gmPeerId: string | null = null) {
   const model = new TableModel();
   const sent: Sent[] = [];
-  const sync = new HostTableSync(model, (recipient, event) => sent.push({ recipient, event }), () => recipients);
+  const sync = new HostTableSync(model, (recipient, event) => sent.push({ recipient, event }), () => recipients, () => gmPeerId);
   return { model, sync, sent };
 }
 
@@ -309,7 +311,8 @@ describe("HostTableSync — per-recipient redaction on broadcast", () => {
     expect(toBob.type).toBe("pile-upserted");
     if (toBob.type === "pile-upserted") {
       expect(toBob.pile.cards[0].def.front).toEqual(DEF_A.back);
-      expect(toBob.pile.cards[0].hiddenBy).toBeNull();
+      // D25: bob can't see the content, but does see *that* alice is hiding it.
+      expect(toBob.pile.cards[0].hiddenBy).toBe("alice");
     }
   });
 });
@@ -427,6 +430,17 @@ describe("HostTableSync — sendSnapshotTo", () => {
     expect(event.type).toBe("snapshot");
     if (event.type === "snapshot") expect(event.pieces).toEqual([piece]);
   });
+
+  it("also includes every current mat, unredacted", () => {
+    const { model, sync, sent } = makeHost(["alice"]);
+    const mat = model.spawnMat(MAT_A, 3, 4);
+
+    sync.sendSnapshotTo("alice");
+
+    const event = sent[0].event;
+    expect(event.type).toBe("snapshot");
+    if (event.type === "snapshot") expect(event.mats).toEqual([mat]);
+  });
 });
 
 describe("HostTableSync — pieces (spawn-piece/move-piece/rotate-piece-by/set-piece-rotation/remove-piece)", () => {
@@ -480,6 +494,96 @@ describe("HostTableSync — pieces (spawn-piece/move-piece/rotate-piece-by/set-p
     const { sync, sent } = makeHost(["host"]);
     sync.handleRequest("host", { type: "spawn-piece", def: PIECE_A, x: 0, y: 0 });
     expect(sent.every((s) => s.event.type === "piece-upserted")).toBe(true);
+  });
+});
+
+describe("HostTableSync — mats (spawn-mat/move-mat/rotate-mat-by/set-mat-rotation/set-mat-locked/remove-mat)", () => {
+  it("spawn-mat broadcasts the new mat to every recipient, unlocked by default", () => {
+    const { sync, sent } = makeHost(["host", "alice"]);
+    sync.handleRequest("host", { type: "spawn-mat", def: MAT_A, x: 1, y: 2 });
+
+    expect(sent).toHaveLength(2);
+    for (const s of sent) expect(s.event).toMatchObject({ type: "mat-upserted", mat: { x: 1, y: 2, locked: false, def: MAT_A } });
+  });
+
+  it("spawn-mat can start locked", () => {
+    const { sync, sent } = makeHost(["host"]);
+    sync.handleRequest("host", { type: "spawn-mat", def: MAT_A, x: 0, y: 0, locked: true });
+    expect(sent[0].event).toMatchObject({ type: "mat-upserted", mat: { locked: true } });
+  });
+
+  it("an unlocked mat can be moved/rotated/removed by anyone", () => {
+    const { model, sync, sent } = makeHost(["host"]);
+    const mat = model.spawnMat(MAT_A, 0, 0);
+    sync.handleRequest("alice", { type: "move-mat", matId: mat.id, x: 30, y: 40 });
+    expect(model.getMat(mat.id)).toMatchObject({ x: 30, y: 40 });
+    sync.handleRequest("alice", { type: "rotate-mat-by", matId: mat.id, deltaRadians: 1 });
+    expect(model.getMat(mat.id)!.rotation).toBeCloseTo(1);
+    sync.handleRequest("alice", { type: "set-mat-rotation", matId: mat.id, radians: 2 });
+    expect(model.getMat(mat.id)!.rotation).toBeCloseTo(2);
+    expect(sent.every((s) => s.event.type === "mat-upserted")).toBe(true);
+  });
+
+  it("a locked mat can be moved/rotated/removed by the GM", () => {
+    const { model, sync } = makeHost(["host", "gm"], "gm");
+    const mat = model.spawnMat(MAT_A, 0, 0, true);
+    sync.handleRequest("gm", { type: "move-mat", matId: mat.id, x: 30, y: 40 });
+    expect(model.getMat(mat.id)).toMatchObject({ x: 30, y: 40 });
+  });
+
+  it("a locked mat's move/rotate/remove requests are silently rejected from anyone but the GM", () => {
+    const { model, sync, sent } = makeHost(["host", "gm"], "gm");
+    const mat = model.spawnMat(MAT_A, 5, 5, true);
+
+    sync.handleRequest("host", { type: "move-mat", matId: mat.id, x: 99, y: 99 });
+    sync.handleRequest("host", { type: "rotate-mat-by", matId: mat.id, deltaRadians: 1 });
+    sync.handleRequest("host", { type: "set-mat-rotation", matId: mat.id, radians: 1 });
+    sync.handleRequest("host", { type: "remove-mat", matId: mat.id });
+
+    expect(model.getMat(mat.id)).toEqual(mat); // completely untouched
+    expect(sent).toEqual([]); // nothing broadcast at all — a true no-op, not just "no visible effect"
+  });
+
+  it("with no GM known at all (the HostTableSync default), a locked mat can't be moved by anyone", () => {
+    const { model, sync, sent } = makeHost(["host"]); // no gmPeerId passed — defaults to null
+    const mat = model.spawnMat(MAT_A, 0, 0, true);
+    sync.handleRequest("host", { type: "move-mat", matId: mat.id, x: 1, y: 1 });
+    expect(model.getMat(mat.id)).toEqual(mat);
+    expect(sent).toEqual([]);
+  });
+
+  it("set-mat-locked is GM-only in both directions, regardless of the mat's current lock state", () => {
+    const { model, sync, sent } = makeHost(["host", "gm"], "gm");
+    const mat = model.spawnMat(MAT_A, 0, 0, false);
+
+    sync.handleRequest("host", { type: "set-mat-locked", matId: mat.id, locked: true });
+    expect(model.getMat(mat.id)!.locked).toBe(false); // rejected — host isn't the GM
+    expect(sent).toEqual([]);
+
+    sync.handleRequest("gm", { type: "set-mat-locked", matId: mat.id, locked: true });
+    expect(model.getMat(mat.id)!.locked).toBe(true);
+
+    sync.handleRequest("host", { type: "set-mat-locked", matId: mat.id, locked: false });
+    expect(model.getMat(mat.id)!.locked).toBe(true); // still rejected, even though it's an *unlock*
+  });
+
+  it("a mutation request for a nonexistent mat doesn't throw, and correctly reports it as absent", () => {
+    const { sync, sent } = makeHost(["host"], "host");
+    for (const req of [
+      { type: "move-mat" as const, matId: "ghost", x: 0, y: 0 },
+      { type: "rotate-mat-by" as const, matId: "ghost", deltaRadians: 1 },
+      { type: "set-mat-rotation" as const, matId: "ghost", radians: 1 },
+      { type: "set-mat-locked" as const, matId: "ghost", locked: true },
+    ]) {
+      expect(() => sync.handleRequest("host", req)).not.toThrow();
+    }
+    expect(sent.every((s) => s.event.type === "mat-removed" && s.event.matId === "ghost")).toBe(true);
+  });
+
+  it("mat, piece, and pile requests never cross-contaminate each other's broadcasts", () => {
+    const { sync, sent } = makeHost(["host"]);
+    sync.handleRequest("host", { type: "spawn-mat", def: MAT_A, x: 0, y: 0 });
+    expect(sent.every((s) => s.event.type === "mat-upserted")).toBe(true);
   });
 });
 
@@ -557,6 +661,47 @@ describe("PeerTableSync — applying host events", () => {
     sync.applyEvent({ type: "piece-removed", pieceId: "pc1" });
 
     expect(model.getPiece("pc1")).toBeUndefined();
+  });
+
+  it("snapshot with no mats field leaves the model's mats empty (older/test literals)", () => {
+    const model = new TableModel();
+    model.setMat({ id: "stale-mat", x: 0, y: 0, rotation: 0, locked: false, def: MAT_A });
+    const sync = new PeerTableSync(model, () => {});
+
+    sync.applyEvent({ type: "snapshot", piles: [] });
+
+    expect(model.allMats()).toEqual([]);
+  });
+
+  it("snapshot with mats replaces them wholesale, same as piles/pieces", () => {
+    const model = new TableModel();
+    model.setMat({ id: "stale-mat", x: 0, y: 0, rotation: 0, locked: false, def: MAT_A });
+    const sync = new PeerTableSync(model, () => {});
+    const fresh = { id: "fresh-mat", x: 7, y: 8, rotation: 0, locked: true, def: MAT_A };
+
+    sync.applyEvent({ type: "snapshot", piles: [], mats: [fresh] });
+
+    expect(model.allMats()).toEqual([fresh]);
+  });
+
+  it("mat-upserted upserts into the local model", () => {
+    const model = new TableModel();
+    const sync = new PeerTableSync(model, () => {});
+    const mat = { id: "m1", x: 1, y: 2, rotation: 0, locked: false, def: MAT_A };
+
+    sync.applyEvent({ type: "mat-upserted", mat });
+
+    expect(model.getMat("m1")).toEqual(mat);
+  });
+
+  it("mat-removed deletes from the local model", () => {
+    const model = new TableModel();
+    model.setMat({ id: "m1", x: 0, y: 0, rotation: 0, locked: false, def: MAT_A });
+    const sync = new PeerTableSync(model, () => {});
+
+    sync.applyEvent({ type: "mat-removed", matId: "m1" });
+
+    expect(model.getMat("m1")).toBeUndefined();
   });
 
   it("drag-hint is a no-op on the local model — it's cosmetic only", () => {
@@ -674,6 +819,26 @@ describe("PeerTableSync — sending requests to the host", () => {
       { type: "rotate-piece-by", pieceId: "pc1", deltaRadians: 0.5 },
       { type: "set-piece-rotation", pieceId: "pc1", radians: 1.2 },
       { type: "remove-piece", pieceId: "pc1" },
+    ]);
+  });
+
+  it("spawnMat, moveMat, rotateMatBy, setMatRotation, setMatLocked, removeMat", () => {
+    const { sync, requests } = makePeer();
+    sync.spawnMat(MAT_A, 1, 2);
+    sync.spawnMat(MAT_A, 1, 2, true);
+    sync.moveMat("m1", 3, 4);
+    sync.rotateMatBy("m1", 0.5);
+    sync.setMatRotation("m1", 1.2);
+    sync.setMatLocked("m1", true);
+    sync.removeMat("m1");
+    expect(requests).toEqual([
+      { type: "spawn-mat", def: MAT_A, x: 1, y: 2, locked: false },
+      { type: "spawn-mat", def: MAT_A, x: 1, y: 2, locked: true },
+      { type: "move-mat", matId: "m1", x: 3, y: 4 },
+      { type: "rotate-mat-by", matId: "m1", deltaRadians: 0.5 },
+      { type: "set-mat-rotation", matId: "m1", radians: 1.2 },
+      { type: "set-mat-locked", matId: "m1", locked: true },
+      { type: "remove-mat", matId: "m1" },
     ]);
   });
 });

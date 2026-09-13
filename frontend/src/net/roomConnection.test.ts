@@ -205,7 +205,7 @@ describe("RoomConnection — host migration", () => {
     const conn = new RoomConnection(model, view, {} as never, "newhost");
 
     const snapshotPiles = [{ id: "p1", x: 1, y: 1, rotation: 0, cards: [] }];
-    const client = conn.becomeHostFromMigration({ piles: snapshotPiles, pieces: [] }, []);
+    const client = conn.becomeHostFromMigration({ piles: snapshotPiles, pieces: [], mats: [] }, []);
 
     expect(model.allPiles()).toEqual(snapshotPiles);
     expect(view.events.some((e) => e.type === "snapshot")).toBe(true);
@@ -229,7 +229,7 @@ describe("RoomConnection — host migration", () => {
     const survivorView = new RecordingView();
     const survivorConn = new RoomConnection(new TableModel(), survivorView, {} as never, "survivor", net.linkFactory("survivor"));
 
-    conn.becomeHostFromMigration({ piles: [], pieces: [] }, ["survivor"]);
+    conn.becomeHostFromMigration({ piles: [], pieces: [], mats: [] }, ["survivor"]);
     survivorConn.becomePeerOf("newhost");
 
     expect(survivorView.events.some((e) => e.type === "snapshot")).toBe(true);
@@ -286,7 +286,7 @@ describe("RoomConnection — currentSnapshot", () => {
     client.sendRequest({ type: "spawn", def: DEF_A, x: 0, y: 0 });
     client.sendRequest({ type: "spawn-piece", def: PIECE_A, x: 1, y: 1 });
 
-    expect(conn.currentSnapshot()).toEqual({ piles: model.allPiles(), pieces: model.allPieces() });
+    expect(conn.currentSnapshot()).toEqual({ piles: model.allPiles(), pieces: model.allPieces(), mats: model.allMats() });
   });
 });
 
@@ -313,7 +313,7 @@ describe("RoomConnection — side channels (net/packageTransfer.ts, net/chatSync
     expect(received).toEqual([{ fromPeerId: "alice", message: { type: "custom:ping", n: 1 } }]);
     // Definitely never reached table-sync interpretation as some bogus TableEvent —
     // the peer's view only ever saw its own real, expected connect-time snapshot.
-    expect(peerView.events).toEqual([{ type: "snapshot", piles: [], pieces: [] }]);
+    expect(peerView.events).toEqual([{ type: "snapshot", piles: [], pieces: [], mats: [] }]);
   });
 
   it("two independently-registered side channels coexist without either seeing the other's messages", () => {

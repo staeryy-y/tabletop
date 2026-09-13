@@ -120,6 +120,25 @@ export const UI_TEXT = {
     savePackage: "Save package",
     readImageFailedFallback: "failed to read image",
 
+    tabs: {
+      tracks: "Tracks",
+      dice: "Dice",
+      cards: "Cards",
+      pieces: "Pieces",
+      mats: "Mats",
+      macros: "Macros",
+      layout: "Layout",
+    },
+
+    layoutTab: {
+      sectionTitle: "Layout — where everything starts on the table",
+      hint: "Drag a token below to set where that set appears when the room starts.",
+      emptyHint: "Add some card sets, piece sets, or mat sets first — then position them here.",
+      cardsLegend: "Card sets",
+      piecesLegend: "Piece sets",
+      matsLegend: "Mat sets",
+    },
+
     tracks: {
       sectionTitle: "Tracks (character-sheet stats)",
       keyPlaceholder: "key",
@@ -147,7 +166,6 @@ export const UI_TEXT = {
       labelPlaceholder: "label shown on the table, e.g. Role Cards",
       removeSet: "Remove set",
       addSet: "+ Add card set",
-      layoutHint: "Drag a stack below to set where it appears when the room starts.",
     },
 
     cardEntries: {
@@ -191,6 +209,27 @@ export const UI_TEXT = {
       modalImageLabel: "Image (optional, instead of a symbol)",
       modalConnectorsLabel: "Connectors (optional)",
       createButton: "Create piece",
+    },
+
+    matSets: {
+      sectionTitle: "Mat sets (battle mats, playmats, zone markers)",
+      keyPlaceholder: "set key",
+      removeSet: "Remove set",
+      addSet: "+ Add mat set",
+    },
+
+    matEntries: {
+      symbolPlaceholder: "emoji/symbol, e.g. 🟩",
+      readingHint: "reading…",
+      remove: "Remove",
+      addMat: "+ Add mat",
+      newMatDefaultSymbol: "🟩",
+      startsLockedLabel: "Starts locked (GM only can move)",
+      // Same modal-on-create treatment as cardEntries/pieceEntries, above.
+      modalTitle: "New mat",
+      modalSymbolLabel: "Symbol/emoji",
+      modalImageLabel: "Image (optional, instead of a symbol)",
+      createButton: "Create mat",
     },
 
     macros: {
@@ -255,5 +294,7 @@ export const UI_TEXT = {
     flipAll: (count: number) => `Flip all (${count})`,
     hideUnhideAll: (count: number) => `Hide/unhide all (${count})`,
     collapseIntoDeck: "Collapse into a deck",
+    lockMat: "Lock (GM only can move)",
+    unlockMat: "Unlock",
   },
 };

@@ -163,6 +163,14 @@ async def room_socket(websocket: WebSocket, slug: str, token: str) -> None:
             # Every already-connected peer's presence, so a joiner can render everyone
             # immediately rather than waiting on a peer-joined for each one it missed.
             "peers": [_presence(p) for p in state.peers.values() if p.peer_id != peer_id],
+            # The joiner's own presence — notably its randomly-assigned `color` (see
+            # DEFAULT_COLOR_PALETTE above). Everyone else learns a new peer's presence
+            # from the "peer-joined" broadcast below, but that's explicitly excluded
+            # from reaching the peer it's *about* (a peer never needs to be told about
+            # itself that way) — without this, the joiner's own client had no way to
+            # ever learn its real color and just made one up (a hardcoded gray) that
+            # every other client's copy of it would then disagree with.
+            "self": _presence(peer),
         },
     )
     if promoted:

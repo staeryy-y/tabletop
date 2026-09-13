@@ -5,6 +5,7 @@
 // dependency at all.
 import { describe, expect, it } from "vitest";
 import { CardDef } from "./card";
+import { MatDef } from "./mat";
 import { PieceDef } from "./piece";
 import { TableModel } from "./pileModel";
 
@@ -14,6 +15,9 @@ const DEF_C: CardDef = { id: "c", front: { title: "C", color: 0 }, back: { title
 
 const PIECE_A: PieceDef = { id: "pa", symbol: "♟" };
 const PIECE_B: PieceDef = { id: "pb", image: "data:image/png;base64,x" };
+
+const MAT_A: MatDef = { id: "ma", symbol: "🟩" };
+const MAT_B: MatDef = { id: "mb", image: "data:image/png;base64,y" };
 
 describe("spawnCard", () => {
   it("creates a standalone pile of exactly one card, face-down and not hidden", () => {
@@ -559,6 +563,17 @@ describe("loadSnapshot", () => {
 
     expect(model.allPieces()).toEqual([{ id: "piece-x", x: 1, y: 2, rotation: 0, def: PIECE_B }]);
   });
+
+  it("defaults mats to empty when omitted, and replaces them wholesale when given", () => {
+    const model = new TableModel();
+    model.spawnMat(MAT_A, 0, 0);
+
+    model.loadSnapshot([]);
+    expect(model.allMats()).toEqual([]);
+
+    model.loadSnapshot([], [], [{ id: "mat-x", x: 1, y: 2, rotation: 0, locked: true, def: MAT_B }]);
+    expect(model.allMats()).toEqual([{ id: "mat-x", x: 1, y: 2, rotation: 0, locked: true, def: MAT_B }]);
+  });
 });
 
 describe("Pieces: spawnPiece/movePiece/rotatePiece*/removePiece — see docs/GAME_DEFINITION.md's Pieces section", () => {
@@ -631,5 +646,107 @@ describe("Pieces: spawnPiece/movePiece/rotatePiece*/removePiece — see docs/GAM
     expect(model.getPile(pile.id)).toMatchObject({ x: 0, y: 0, rotation: 0 });
     expect(model.allPiles()).toHaveLength(1);
     expect(model.allPieces()).toHaveLength(1);
+  });
+});
+
+describe("Mats: spawnMat/moveMat/rotateMat*/setMatLocked/removeMat — see docs/DECISIONS.md D26", () => {
+  it("spawnMat creates a standalone, unlocked-by-default mat, distinct from any pile/piece id", () => {
+    const model = new TableModel();
+    const mat = model.spawnMat(MAT_A, 10, 20);
+
+    expect(mat).toEqual({ id: mat.id, x: 10, y: 20, rotation: 0, locked: false, def: MAT_A });
+    expect(model.getMat(mat.id)).toBe(mat);
+    expect(model.getPile(mat.id)).toBeUndefined();
+    expect(model.getPiece(mat.id)).toBeUndefined();
+  });
+
+  it("spawnMat can start locked", () => {
+    const model = new TableModel();
+    const mat = model.spawnMat(MAT_A, 0, 0, true);
+    expect(mat.locked).toBe(true);
+  });
+
+  it("gives every spawned mat a distinct id, in its own namespace from pile/piece ids", () => {
+    const model = new TableModel();
+    const pileId = model.spawnCard(DEF_A, 0, 0).id;
+    const pieceId = model.spawnPiece(PIECE_A, 0, 0).id;
+    const matIds = new Set(Array.from({ length: 20 }, () => model.spawnMat(MAT_A, 0, 0).id));
+    expect(matIds.size).toBe(20);
+    expect(matIds.has(pileId)).toBe(false);
+    expect(matIds.has(pieceId)).toBe(false);
+  });
+
+  it("moveMat repositions in place; a missing id is a silent no-op", () => {
+    const model = new TableModel();
+    const mat = model.spawnMat(MAT_A, 0, 0);
+    model.moveMat(mat.id, 30, 40);
+    expect(model.getMat(mat.id)).toMatchObject({ x: 30, y: 40 });
+    expect(() => model.moveMat("ghost", 0, 0)).not.toThrow();
+  });
+
+  it("rotateMatBy accumulates and wraps into [0, 2π); setMatRotation sets it outright", () => {
+    const model = new TableModel();
+    const mat = model.spawnMat(MAT_A, 0, 0);
+    model.rotateMatBy(mat.id, Math.PI);
+    model.rotateMatBy(mat.id, Math.PI * 1.5);
+    expect(model.getMat(mat.id)!.rotation).toBeCloseTo(Math.PI / 2);
+
+    model.setMatRotation(mat.id, -Math.PI / 2);
+    expect(model.getMat(mat.id)!.rotation).toBeCloseTo((3 * Math.PI) / 2);
+  });
+
+  it("rotateMat90 is exactly rotateMatBy(π/2)", () => {
+    const model = new TableModel();
+    const mat = model.spawnMat(MAT_A, 0, 0);
+    model.rotateMat90(mat.id);
+    expect(model.getMat(mat.id)!.rotation).toBeCloseTo(Math.PI / 2);
+  });
+
+  it("setMatLocked toggles the lock flag; a missing id is a silent no-op", () => {
+    const model = new TableModel();
+    const mat = model.spawnMat(MAT_A, 0, 0);
+    model.setMatLocked(mat.id, true);
+    expect(model.getMat(mat.id)!.locked).toBe(true);
+    model.setMatLocked(mat.id, false);
+    expect(model.getMat(mat.id)!.locked).toBe(false);
+    expect(() => model.setMatLocked("ghost", true)).not.toThrow();
+  });
+
+  it("setMat inserts or overwrites by the id it already carries, without allocating a new one", () => {
+    const model = new TableModel();
+    model.setMat({ id: "mat-remote", x: 1, y: 2, rotation: 0, locked: true, def: MAT_B });
+    expect(model.getMat("mat-remote")).toEqual({ id: "mat-remote", x: 1, y: 2, rotation: 0, locked: true, def: MAT_B });
+  });
+
+  it("removeMat removes it from allMats(); removing a nonexistent id does not throw", () => {
+    const model = new TableModel();
+    const mat = model.spawnMat(MAT_A, 0, 0);
+    model.removeMat(mat.id);
+    expect(model.getMat(mat.id)).toBeUndefined();
+    expect(model.allMats()).toHaveLength(0);
+    expect(() => model.removeMat("ghost")).not.toThrow();
+  });
+
+  it("this model itself never enforces the lock — that's net/syncProtocol.ts's HostTableSync's job, not TableModel's", () => {
+    const model = new TableModel();
+    const mat = model.spawnMat(MAT_A, 0, 0, true);
+    model.moveMat(mat.id, 99, 99); // no peerId parameter to check against at all
+    expect(model.getMat(mat.id)).toMatchObject({ x: 99, y: 99, locked: true });
+  });
+
+  it("mats, pieces, and piles coexist independently — acting on one never touches the others", () => {
+    const model = new TableModel();
+    const pile = model.spawnCard(DEF_A, 0, 0);
+    const piece = model.spawnPiece(PIECE_A, 0, 0);
+    const mat = model.spawnMat(MAT_A, 0, 0);
+
+    model.moveMat(mat.id, 99, 99);
+    model.rotateMat90(mat.id);
+
+    expect(model.getPile(pile.id)).toMatchObject({ x: 0, y: 0, rotation: 0 });
+    expect(model.getPiece(piece.id)).toMatchObject({ x: 0, y: 0, rotation: 0 });
+    expect(model.allPiles()).toHaveLength(1);
+    expect(model.allPieces()).toHaveLength(1);
+    expect(model.allMats()).toHaveLength(1);
   });
 });
