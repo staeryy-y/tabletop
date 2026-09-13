@@ -36,13 +36,17 @@ export type TableRequest =
    * below: it never touches the model (the drop is still what's authoritative — see
    * "pick-up-and-drop"), so there's nothing here for a late-joining peer to catch up
    * on, and no reason to hold up an actual state change behind it. */
-  | { type: "drag-hint"; pileId: string; x: number; y: number };
+  | { type: "drag-hint"; pileId: string; x: number; y: number }
+  /** The rotate-handle's equivalent of drag-hint — same cosmetic-only treatment, for
+   * the same reason: the eventual "set-rotation" request is what's authoritative. */
+  | { type: "rotate-hint"; pileId: string; radians: number };
 
 export type TableEvent =
   | { type: "pile-upserted"; pile: PileState }
   | { type: "pile-removed"; pileId: string }
   | { type: "snapshot"; piles: PileState[] }
-  | { type: "drag-hint"; pileId: string; x: number; y: number; byPeerId: string };
+  | { type: "drag-hint"; pileId: string; x: number; y: number; byPeerId: string }
+  | { type: "rotate-hint"; pileId: string; radians: number; byPeerId: string };
 
 /** A pile as it should appear to `recipientPeerId` — unchanged unless the top card is
  * hidden from them, in which case its front is replaced by its back (and faceUp forced
@@ -83,13 +87,11 @@ export class HostTableSync {
    * and to compute redaction on the resulting broadcast. */
   handleRequest(fromPeerId: string, req: TableRequest): void {
     if (req.type === "drag-hint") {
-      // Relayed as-is to everyone *except* the dragger (who's already moving it
-      // locally, with no round trip) — never touches the model, never goes through
-      // emitTouched, so it can't be mistaken for (or delay) an actual state change.
-      for (const recipient of this.recipients()) {
-        if (recipient === fromPeerId) continue;
-        this.broadcast(recipient, { type: "drag-hint", pileId: req.pileId, x: req.x, y: req.y, byPeerId: fromPeerId });
-      }
+      this.relayHint(fromPeerId, { type: "drag-hint", pileId: req.pileId, x: req.x, y: req.y, byPeerId: fromPeerId });
+      return;
+    }
+    if (req.type === "rotate-hint") {
+      this.relayHint(fromPeerId, { type: "rotate-hint", pileId: req.pileId, radians: req.radians, byPeerId: fromPeerId });
       return;
     }
 
@@ -147,6 +149,17 @@ export class HostTableSync {
     this.emitTouched(touched);
   }
 
+  /** Relayed as-is to everyone *except* the sender (who's already showing it locally,
+   * with no round trip) — never touches the model, never goes through emitTouched, so
+   * it can't be mistaken for (or delay) an actual state change. Shared by drag-hint and
+   * rotate-hint, the two purely-cosmetic TableEvent variants. */
+  private relayHint(fromPeerId: string, event: TableEvent): void {
+    for (const recipient of this.recipients()) {
+      if (recipient === fromPeerId) continue;
+      this.broadcast(recipient, event);
+    }
+  }
+
   private emitTouched(pileIds: Iterable<string>): void {
     for (const pileId of pileIds) {
       const pile = this.model.getPile(pileId);
@@ -182,6 +195,7 @@ export class PeerTableSync {
         this.model.loadSnapshot(event.piles);
         break;
       case "drag-hint":
+      case "rotate-hint":
         break; // cosmetic only — see TableEvent's doc comment; nothing to mirror into the model
     }
   }
@@ -215,5 +229,8 @@ export class PeerTableSync {
   }
   dragHint(pileId: string, x: number, y: number): void {
     this.sendToHost({ type: "drag-hint", pileId, x, y });
+  }
+  rotateHint(pileId: string, radians: number): void {
+    this.sendToHost({ type: "rotate-hint", pileId, radians });
   }
 }

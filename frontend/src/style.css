@@ -283,6 +283,19 @@ button.hud-icon-button.active {
   padding: 10px 14px;
 }
 
+.hud-help {
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.hud-help p {
+  margin: 0 0 8px;
+}
+
+.hud-help p:last-child {
+  margin-bottom: 0;
+}
+
 .eyes-closed-overlay {
   position: fixed;
   inset: 0;

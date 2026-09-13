@@ -21,11 +21,12 @@ const CAMERA_PAN_SPEED = 400; // world units/second
 const CAMERA_ROTATE_SPEED = Math.PI / 2; // radians/second
 const PLAYER_TOKEN_RADIUS = 16;
 const PLAYER_SEAT_RADIUS = 260;
-/** How often a synced drag sends a "drag-hint" (net/syncProtocol.ts) while it's in
- * progress, so other players see roughly what's being moved instead of it teleporting
- * only on drop — coarse on purpose (a cosmetic preview, not the authoritative position,
- * which is still only ever the final drop), so there's no need for per-frame updates. */
-const DRAG_HINT_INTERVAL_MS = 120;
+/** How often a synced drag or rotate sends a "drag-hint"/"rotate-hint"
+ * (net/syncProtocol.ts) while it's in progress, so other players see roughly what's
+ * happening instead of it teleporting only when the gesture ends — coarse on purpose (a
+ * cosmetic preview, not the authoritative position/angle, which is still only ever the
+ * final drop/set-rotation), so there's no need for per-frame updates. */
+const HINT_INTERVAL_MS = 120;
 /** How transparent a pile looks on someone else's screen while a drag-hint says it's
  * being moved — mirrors the alpha a local drag already uses (see beginDrag), reset back
  * to 1 the moment the real, authoritative drop event arrives. */
@@ -72,9 +73,11 @@ export class TableApp implements TableView {
   private dragging: { pileId: string; view: Container; x: number; y: number; localFloating: PileState | null } | null = null;
   private rotating: { pileId: string; view: Container; radians: number } | null = null;
   /** Last time (performance.now()) this client sent a drag-hint — see
-   * DRAG_HINT_INTERVAL_MS. Reset to 0 at the start of each synced drag so the very
+   * HINT_INTERVAL_MS. Reset to 0 at the start of each synced drag so the very
    * first move sends immediately rather than waiting out the throttle. */
   private lastDragHintAt = 0;
+  /** Same idea as lastDragHintAt, for rotate-hint. */
+  private lastRotateHintAt = 0;
   private panning = false;
   private menuEl: HTMLDivElement | null = null;
 
@@ -182,6 +185,11 @@ export class TableApp implements TableView {
         view.position.set(event.x, event.y);
         view.alpha = REMOTE_DRAG_ALPHA;
       }
+    } else if (event.type === "rotate-hint") {
+      // Same idea as drag-hint, for the rotate-handle gesture — no alpha dimming
+      // here, since a local rotate doesn't dim its own view either.
+      const view = this.views.get(event.pileId);
+      if (view) view.rotation = event.radians;
     }
   }
 
@@ -345,6 +353,7 @@ export class TableApp implements TableView {
       e.stopPropagation();
       const view = this.views.get(pileId);
       if (view) this.rotating = { pileId, view, radians: view.rotation };
+      this.lastRotateHintAt = 0; // let the very first move below send a hint immediately
     });
     return handle;
   }
@@ -404,7 +413,7 @@ export class TableApp implements TableView {
     this.dragging.view.zIndex = 1000;
   }
 
-  /** Send a coarse, throttled drag-hint (see DRAG_HINT_INTERVAL_MS) — never touches
+  /** Send a coarse, throttled drag-hint (see HINT_INTERVAL_MS) — never touches
    * this client's own model or view, since this client is already moving the real
    * view locally; it's purely so *other* players see it too before the drop. A no-op
    * when there's no syncClient at all (a bare, room-less sandbox has no one else to
@@ -412,9 +421,18 @@ export class TableApp implements TableView {
   private maybeSendDragHint(pileId: string, x: number, y: number): void {
     if (!this.syncClient) return;
     const now = performance.now();
-    if (now - this.lastDragHintAt < DRAG_HINT_INTERVAL_MS) return;
+    if (now - this.lastDragHintAt < HINT_INTERVAL_MS) return;
     this.lastDragHintAt = now;
     this.syncClient.sendRequest({ type: "drag-hint", pileId, x, y });
+  }
+
+  /** Same idea as maybeSendDragHint, for the rotate-handle gesture. */
+  private maybeSendRotateHint(pileId: string, radians: number): void {
+    if (!this.syncClient) return;
+    const now = performance.now();
+    if (now - this.lastRotateHintAt < HINT_INTERVAL_MS) return;
+    this.lastRotateHintAt = now;
+    this.syncClient.sendRequest({ type: "rotate-hint", pileId, radians });
   }
 
   private onBackgroundPointerDown(e: FederatedPointerEvent): void {
@@ -428,6 +446,7 @@ export class TableApp implements TableView {
       this.rotating.radians = angle;
       this.rotating.view.rotation = angle;
       if (!this.syncClient) this.model.setRotation(this.rotating.pileId, angle);
+      else this.maybeSendRotateHint(this.rotating.pileId, angle);
     } else if (this.dragging) {
       const local = this.world.toLocal(e.global);
       this.dragging.x = local.x;

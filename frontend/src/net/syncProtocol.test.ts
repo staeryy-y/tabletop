@@ -281,6 +281,28 @@ describe("HostTableSync — drag-hint (cosmetic, never touches the model)", () =
   });
 });
 
+describe("HostTableSync — rotate-hint (cosmetic, never touches the model)", () => {
+  it("relays the hint to every recipient except the rotator, tagged with who's rotating", () => {
+    const { sync, sent } = makeHost(["host", "alice", "bob"]);
+
+    sync.handleRequest("alice", { type: "rotate-hint", pileId: "p1", radians: 1.5 });
+
+    expect(sent).toEqual([
+      { recipient: "host", event: { type: "rotate-hint", pileId: "p1", radians: 1.5, byPeerId: "alice" } },
+      { recipient: "bob", event: { type: "rotate-hint", pileId: "p1", radians: 1.5, byPeerId: "alice" } },
+    ]);
+  });
+
+  it("does not affect the real pile's rotation in the model at all", () => {
+    const { model, sync } = makeHost(["host"]);
+    const pile = model.spawnCard(DEF_A, 5, 5);
+
+    sync.handleRequest("host", { type: "rotate-hint", pileId: pile.id, radians: 3 });
+
+    expect(model.getPile(pile.id)).toMatchObject({ rotation: 0 });
+  });
+});
+
 describe("HostTableSync — sendSnapshotTo", () => {
   it("sends every current pile, redacted for that recipient", () => {
     const { model, sync, sent } = makeHost(["alice", "bob"]);
@@ -348,6 +370,16 @@ describe("PeerTableSync — applying host events", () => {
 
     expect(model.getPile(pile.id)).toMatchObject({ x: 5, y: 5 });
   });
+
+  it("rotate-hint is a no-op on the local model — it's cosmetic only", () => {
+    const model = new TableModel();
+    const pile = model.spawnCard(DEF_A, 5, 5);
+    const sync = new PeerTableSync(model, () => {});
+
+    sync.applyEvent({ type: "rotate-hint", pileId: pile.id, radians: 2, byPeerId: "alice" });
+
+    expect(model.getPile(pile.id)).toMatchObject({ rotation: 0 });
+  });
 });
 
 describe("PeerTableSync — sending requests to the host", () => {
@@ -399,6 +431,12 @@ describe("PeerTableSync — sending requests to the host", () => {
     const { sync, requests } = makePeer();
     sync.dragHint("p1", 3, 4);
     expect(requests).toEqual([{ type: "drag-hint", pileId: "p1", x: 3, y: 4 }]);
+  });
+
+  it("rotateHint", () => {
+    const { sync, requests } = makePeer();
+    sync.rotateHint("p1", 2.1);
+    expect(requests).toEqual([{ type: "rotate-hint", pileId: "p1", radians: 2.1 }]);
   });
 });
 

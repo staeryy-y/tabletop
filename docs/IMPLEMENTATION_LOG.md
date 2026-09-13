@@ -77,8 +77,15 @@ that touched this log.
 
 Newest first. Fixed items move to "Implemented" above with a note here of what changed.
 
-- **(Fixed)** UI visual design, eyes-closed's effect, and chat sync — see "Implemented"
-  above for what actually landed for each.
+- **(Fixed)** Rotate-hint: the rotate-handle gesture now sends the same kind of coarse,
+  throttled live preview drag-hint already had (`net/syncProtocol.ts`'s "rotate-hint",
+  mirroring "drag-hint" — both now share a `relayHint` helper on `HostTableSync`).
+- **(Fixed)** In-room help: a `?` toggle in the HUD toolbar opens a dropdown (mutually
+  exclusive with the chat dropdown) with the right-click/drag/rotate/WASD instructions
+  that were dropped when the sidebar was replaced.
+- **(Fixed)** Host reload/close no longer resets table state; UI visual design,
+  eyes-closed's effect, and chat sync — see "Implemented" above for what actually landed
+  for each.
 - **(Not started) Card images don't render on the canvas.** An image-based card front
   (built in the package editor) falls back to a plain color in PixiJS — see
   `card.ts`/`RoomTable.tsx`'s `cardDefsFromPackage` doc comments. Flagged repeatedly,
@@ -86,13 +93,6 @@ Newest first. Fixed items move to "Implemented" above with a note here of what c
 - **(Not started) Pixel-art visual theme.** Explicit early request ("don't forget the
   pixel art theme" x2), still purely aspirational — see D12 in DECISIONS.md for the
   design decision, no implementation.
-- **(Minor, not started) Rotate-handle drags have no live hint.** The drag-hint feature
-  only covers card dragging (matching the specific request that added it); rotating via
-  the handle still only updates other clients on release.
-- **(Minor, new) The old sidebar's instructional hints (how to right-click/drag/rotate,
-  what's actually synced) were dropped, not relocated**, when the sidebar was replaced
-  by the floating HUD — there's currently no in-room help text at all. A `?`/help toggle
-  in the HUD toolbar would be the natural place to put it back.
 
 ## Explicitly out of scope for v1 (see PLAN.md, unchanged)
 

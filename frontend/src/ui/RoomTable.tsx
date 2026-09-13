@@ -74,6 +74,7 @@ export function RoomTable({ slug }: { slug: string }) {
   const [displayName, setDisplayName] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatOpen, setChatOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   useEffect(() => {
     const token = loadRoomToken(slug);
@@ -338,6 +339,23 @@ export function RoomTable({ slug }: { slug: string }) {
         </div>
       )}
 
+      {helpOpen && (
+        <div class="hud-chat hud-help">
+          <p>
+            <strong>Right-click</strong> a card: flip, hide, rotate 90°, or (once stacked) shuffle/draw top.
+          </p>
+          <p>Drag the small handle above a card to rotate it freely. Drag one card onto another to stack them.</p>
+          <p>
+            <strong>WASD</strong> pans the camera, <strong>Q/E</strong> rotates it — handy when players are seated
+            on different sides of the table.
+          </p>
+          <p>
+            Cards and pieces sync live with everyone in the room over a direct connection to the host (falling back
+            to relaying through the server if a direct connection can't be established).
+          </p>
+        </div>
+      )}
+
       <div class="hud-toolbar">
         <a href="#/" class="hud-icon-button" title="Back to dashboard">
           &larr;
@@ -363,8 +381,24 @@ export function RoomTable({ slug }: { slug: string }) {
             />
           ))}
         </div>
-        <button class={"hud-icon-button" + (chatOpen ? " active" : "")} onClick={() => setChatOpen((o) => !o)}>
+        <button
+          class={"hud-icon-button" + (chatOpen ? " active" : "")}
+          onClick={() => {
+            setChatOpen((o) => !o);
+            setHelpOpen(false);
+          }}
+        >
           {"\u{1F4AC}"} Chat
+        </button>
+        <button
+          class={"hud-icon-button" + (helpOpen ? " active" : "")}
+          onClick={() => {
+            setHelpOpen((o) => !o);
+            setChatOpen(false);
+          }}
+          title="How to play"
+        >
+          ?
         </button>
       </div>
 
