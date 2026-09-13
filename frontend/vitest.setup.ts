@@ -38,6 +38,20 @@ if (typeof HTMLCanvasElement !== "undefined") {
   HTMLCanvasElement.prototype.getContext = (() => null) as typeof HTMLCanvasElement.prototype.getContext;
 }
 
+// Same story as canvas above: jsdom defines its own indexedDB that looks real (methods
+// exist, requests get created) but never actually dispatches success/error events,
+// which just hangs anything that awaits it forever rather than failing loudly. Force
+// fake-indexeddb's real (in-memory) implementation into place instead of relying on
+// fake-indexeddb/auto's self-registering import, which doesn't win against jsdom's
+// existing property here.
+import * as fakeIndexedDb from "fake-indexeddb";
+
+for (const target of [globalThis, typeof window !== "undefined" ? window : undefined]) {
+  if (!target) continue;
+  Object.defineProperty(target, "indexedDB", { value: fakeIndexedDb.indexedDB, configurable: true, writable: true });
+  Object.defineProperty(target, "IDBKeyRange", { value: fakeIndexedDb.IDBKeyRange, configurable: true, writable: true });
+}
+
 if (typeof globalThis.localStorage === "undefined" || typeof globalThis.localStorage.clear !== "function") {
   const storage = new MemoryStorage();
   Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true, writable: true });
