@@ -202,4 +202,38 @@ export class TableModel {
     this.piles.set(drawn.id, drawn);
     return drawn;
   }
+
+  /** Move an existing pile straight to (x, y) — no pickup/split, no merge-on-drop, and
+   * (unlike dropPile) no allocation either. For moving a pile as part of a multi-select
+   * group drag (engine/table.ts): every selected pile just needs to translate together,
+   * and splitting a stack or merging into whatever happens to be nearby doesn't make
+   * sense when several piles are being repositioned at once. A no-op if the pile
+   * doesn't exist (a race with something else removing it). */
+  movePile(pileId: string, x: number, y: number): void {
+    const pile = this.piles.get(pileId);
+    if (!pile) return;
+    pile.x = x;
+    pile.y = y;
+  }
+
+  /** Combine several existing piles into one — "collapse into a deck" for a
+   * multi-select group. Cards are concatenated in `pileIds` order, each pile's own
+   * cards kept in their existing bottom-to-top order; the result lands at (x, y) under
+   * a fresh id — never one of the originals, so callers never have to guess which of
+   * several merged piles "the" surviving id is. Any id in `pileIds` that no longer
+   * exists (a race with something else removing it) is silently skipped; returns
+   * undefined only if none of them did. */
+  collapseIntoStack(pileIds: string[], x: number, y: number): PileState | undefined {
+    const cards: CardInstance[] = [];
+    for (const id of pileIds) {
+      const pile = this.piles.get(id);
+      if (!pile) continue;
+      cards.push(...pile.cards);
+      this.piles.delete(id);
+    }
+    if (cards.length === 0) return undefined;
+    const pile: PileState = { id: this.newId(), x, y, rotation: 0, cards };
+    this.piles.set(pile.id, pile);
+    return pile;
+  }
 }

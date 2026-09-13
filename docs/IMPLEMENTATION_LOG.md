@@ -112,10 +112,24 @@ that touched this log.
   `_anonymous_rooms` entry) the instant it goes empty, rather than keeping it the way
   an accounted room's snapshot is kept. A custom game package still works identically —
   it was always client-side, regardless of who owns the room.
+- Multi-select (D20): drag a box over empty table (screen-space rectangle, so it reads
+  correctly even with the camera rotated) to select several piles at once — outlined in
+  `engine/table.ts`. A selected group can be dragged together (`TableModel.movePile`, a
+  new sync request simpler than `pick-up-and-drop`: no splitting, no merge-on-drop),
+  rotated together around its centroid via a diamond-shaped group handle (client-side
+  vector math, committed as one `move-pile` + `set-rotation` per pile — no new protocol
+  needed for this part), or, from the group's right-click menu: flipped/hidden all at
+  once (existing single-pile `flip`/`toggle-hide`, once per pile) or collapsed into one
+  new stack (`TableModel.collapseIntoStack`, a new sync request, landing at the group's
+  centroid under a fresh id). Replaces the old click-drag-to-pan gesture — WASD/Q/E
+  already cover camera movement.
 
 ## Known gaps / open feedback
 
 Newest first. Fixed items move to "Implemented" above with a note here of what changed.
+
+- **(Fixed)** Multi-select — box-select several piles, then move/rotate-around-centroid/
+  flip/hide/collapse-into-a-deck them together (D20) — see "Implemented" above.
 
 - **(Fixed)** Room deletion (`DELETE /api/rooms/{slug}`, admin-only + ownership-checked)
   and anonymous rooms (D19) — see "Implemented" above for the latter's actual shape
@@ -198,6 +212,17 @@ Newest first. Fixed items move to "Implemented" above with a note here of what c
   turns one into an on-table object the way `cardDefsFromPackage`/`spawnCard` do for
   cards — nothing to spawn, place, or render, image or otherwise. A real gap for any
   game whose board is pieces rather than cards (tiles, tokens, a Betrayal-style board).
+  This also blocks the "Layout tab" item directly below from being meaningful for
+  pieces specifically, since there's nothing yet to lay out onto the table.
+
+- **(Not started)** The game-package editor was explicitly requested to be restructured
+  into one tab per element (cards, pieces, tracks, dice, macros) plus a final "Layout"
+  tab for arranging every piece's/card set's spawn position in one place. What actually
+  shipped instead (see "Implemented" above) is narrower: card sets gained a
+  label/position and a draggable `StartingLayoutPreview`, but it's still embedded inside
+  the existing single continuously-scrolling editor, not a real tabbed layout, and
+  doesn't cover pieces (blocked on the gap above) or a unified cross-element "Layout"
+  view.
 
 ## Explicitly out of scope for v1 (see PLAN.md, unchanged)
 

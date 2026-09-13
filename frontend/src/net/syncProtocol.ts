@@ -27,6 +27,15 @@ export type TableRequest =
    * separate piles, when a room starts. */
   | { type: "spawn-stack"; defs: CardDef[]; x: number; y: number }
   | { type: "pick-up-and-drop"; pileId: string; x: number; y: number; mergeRadius: number }
+  /** Moves an existing pile straight to (x, y) — TableModel.movePile's no-split,
+   * no-merge semantics. Used for a multi-select group drag (engine/table.ts): every
+   * selected pile gets one of these, keeping their relative positions, rather than
+   * "pick-up-and-drop"'s single-card-off-a-stack behavior which doesn't make sense
+   * applied to several piles being dragged together. */
+  | { type: "move-pile"; pileId: string; x: number; y: number }
+  /** "Collapse into a deck" for a multi-select group — combines every listed pile's
+   * cards into one new pile at (x, y); see TableModel.collapseIntoStack. */
+  | { type: "collapse-into-stack"; pileIds: string[]; x: number; y: number }
   | { type: "flip"; pileId: string }
   | { type: "toggle-hide"; pileId: string }
   | { type: "rotate-by"; pileId: string; deltaRadians: number }
@@ -131,6 +140,16 @@ export class HostTableSync {
         touched.add(result.kind === "merged" ? result.targetId : result.pile.id);
         break;
       }
+      case "move-pile":
+        this.model.movePile(req.pileId, req.x, req.y);
+        touched.add(req.pileId);
+        break;
+      case "collapse-into-stack": {
+        const pile = this.model.collapseIntoStack(req.pileIds, req.x, req.y);
+        for (const id of req.pileIds) touched.add(id); // any that no longer exist emit pile-removed
+        if (pile) touched.add(pile.id);
+        break;
+      }
       case "flip":
         this.model.flip(req.pileId);
         touched.add(req.pileId);
@@ -229,6 +248,12 @@ export class PeerTableSync {
   }
   pickUpAndDrop(pileId: string, x: number, y: number, mergeRadius: number): void {
     this.sendToHost({ type: "pick-up-and-drop", pileId, x, y, mergeRadius });
+  }
+  movePile(pileId: string, x: number, y: number): void {
+    this.sendToHost({ type: "move-pile", pileId, x, y });
+  }
+  collapseIntoStack(pileIds: string[], x: number, y: number): void {
+    this.sendToHost({ type: "collapse-into-stack", pileIds, x, y });
   }
   flip(pileId: string): void {
     this.sendToHost({ type: "flip", pileId });

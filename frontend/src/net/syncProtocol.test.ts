@@ -161,6 +161,56 @@ describe("HostTableSync — pick-up-and-drop", () => {
   });
 });
 
+describe("HostTableSync — move-pile", () => {
+  it("moves the pile and broadcasts its new position", () => {
+    const { model, sync, sent } = makeHost(["host", "alice"]);
+    const pile = model.spawnCard(DEF_A, 0, 0);
+
+    sync.handleRequest("host", { type: "move-pile", pileId: pile.id, x: 30, y: 40 });
+
+    expect(model.getPile(pile.id)).toMatchObject({ x: 30, y: 40 });
+    expect(sent).toHaveLength(2);
+    for (const s of sent) {
+      expect(s.event).toMatchObject({ type: "pile-upserted", pile: { id: pile.id, x: 30, y: 40 } });
+    }
+  });
+
+  it("a request for a pile that no longer exists is a silent no-op but still reports it removed", () => {
+    const { sync, sent } = makeHost(["host"]);
+    sync.handleRequest("host", { type: "move-pile", pileId: "ghost", x: 0, y: 0 });
+    expect(sent).toEqual([{ recipient: "host", event: { type: "pile-removed", pileId: "ghost" } }]);
+  });
+});
+
+describe("HostTableSync — collapse-into-stack", () => {
+  it("merges the named piles' cards (in order) into one new pile and broadcasts removal of the originals plus an upsert of the new one", () => {
+    const { model, sync, sent } = makeHost(["host", "alice"]);
+    const a = model.spawnCard(DEF_A, 0, 0);
+    const b = model.spawnCard(DEF_B, 100, 100);
+
+    sync.handleRequest("host", { type: "collapse-into-stack", pileIds: [a.id, b.id], x: 50, y: 50 });
+
+    const removedIds = sent.filter((s) => s.event.type === "pile-removed").map((s) => (s.event as { pileId: string }).pileId);
+    expect(new Set(removedIds)).toEqual(new Set([a.id, b.id]));
+
+    const upserts = sent.filter((s) => s.event.type === "pile-upserted");
+    expect(upserts.length).toBeGreaterThan(0);
+    for (const u of upserts) {
+      expect(u.event).toMatchObject({ pile: { x: 50, y: 50 } });
+      if (u.event.type === "pile-upserted") expect(u.event.pile.cards.map((c) => c.def.id)).toEqual(["a", "b"]);
+    }
+    expect(model.getPile(a.id)).toBeUndefined();
+    expect(model.getPile(b.id)).toBeUndefined();
+  });
+
+  it("piles that no longer exist are skipped and still reported removed; an all-missing list broadcasts nothing but removals", () => {
+    const { sync, sent } = makeHost(["host"]);
+    sync.handleRequest("host", { type: "collapse-into-stack", pileIds: ["ghost1", "ghost2"], x: 0, y: 0 });
+    expect(sent.every((s) => s.event.type === "pile-removed")).toBe(true);
+    expect(sent.map((s) => (s.event as { pileId: string }).pileId).sort()).toEqual(["ghost1", "ghost2"]);
+  });
+});
+
 describe("HostTableSync — flip/rotate/shuffle/draw/remove", () => {
   it("flip toggles the top card and broadcasts the pile", () => {
     const { model, sync, sent } = makeHost(["host"]);
@@ -445,6 +495,18 @@ describe("PeerTableSync — sending requests to the host", () => {
     const { sync, requests } = makePeer();
     sync.pickUpAndDrop("p1", 10, 20, 5);
     expect(requests).toEqual([{ type: "pick-up-and-drop", pileId: "p1", x: 10, y: 20, mergeRadius: 5 }]);
+  });
+
+  it("movePile", () => {
+    const { sync, requests } = makePeer();
+    sync.movePile("p1", 7, 8);
+    expect(requests).toEqual([{ type: "move-pile", pileId: "p1", x: 7, y: 8 }]);
+  });
+
+  it("collapseIntoStack", () => {
+    const { sync, requests } = makePeer();
+    sync.collapseIntoStack(["p1", "p2"], 9, 10);
+    expect(requests).toEqual([{ type: "collapse-into-stack", pileIds: ["p1", "p2"], x: 9, y: 10 }]);
   });
 
   it("flip, toggleHide, shuffle, remove", () => {

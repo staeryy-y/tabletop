@@ -322,3 +322,40 @@ rooms have a blank owner field":
   exactly as it would have been if none of them had ever existed. A custom game package
   still works the same for an anonymous room as an accounted one — it was always
   client-side/IndexedDB, never server-held, regardless of who owns the room (D14).
+
+## D20 — Multi-select is client-local selection state plus two new pile-level requests
+
+Requested: drag a box to select several cards, then move/rotate/flip/hide/collapse
+them together. Selection itself (`selectedPileIds` in engine/table.ts) is never synced
+— it's exactly like which card your own mouse happens to be hovering, purely local UI
+state that means nothing to anyone else's browser, so it needed no protocol changes at
+all. What *does* need to be synced is the result of acting on a selection, and that
+turned out to need surprisingly little new protocol:
+
+- **Move** — a new `move-pile` request/`TableModel.movePile`, deliberately simpler than
+  the existing `pick-up-and-drop`: no stack-splitting, no merge-on-drop. Merging two
+  piles just because a group drag happened to end near a third pile would be a strange,
+  surprising side effect of a multi-select action; a group drag always keeps every
+  selected pile as its own pile, just relocated.
+- **Rotate** — no new request at all. Rotating the group rigidly around its centroid
+  ("center of mass" per the request) is computed entirely client-side (rotate each
+  pile's offset-from-centroid vector by the same delta, same rotation convention as the
+  existing single-pile rotate handle — see engine/table.ts's `rotateVector`), then
+  committed as one `move-pile` + one `set-rotation` per pile — both already existed.
+- **Flip / hide** — no new request either: just the existing single-pile `flip`/
+  `toggle-hide`, sent once per selected pile. A batch-flip protocol message would only
+  save a handful of small WebSocket frames for a case (selecting many cards at once)
+  that's already relatively rare, which isn't worth it — consistent with this project's
+  existing "coarse and simple over perfectly batched" choice for hints (D-adjacent, see
+  HINT_INTERVAL_MS's doc comment).
+- **Collapse into a deck** — the one genuinely new operation, `collapse-into-stack`/
+  `TableModel.collapseIntoStack`: merges N existing piles' cards (concatenated in
+  selection order) into a single new pile under a fresh id, landing at the selection's
+  centroid. A fresh id (never one of the originals) means callers never have to guess
+  which of several merged piles is "the" survivor.
+
+The box-select rectangle itself is computed in screen space, not world space, and
+purposefully replaces the old click-drag-to-pan gesture (WASD/Q/E already cover
+panning/rotating the camera — see engine/camera.ts): the camera can be rotated, so an
+axis-aligned rectangle only means "what's visually inside this box" in screen-space
+coordinates, not world-space ones.

@@ -393,6 +393,106 @@ describe("drawTop", () => {
   });
 });
 
+describe("movePile", () => {
+  it("sets an existing pile's position directly", () => {
+    const model = new TableModel();
+    const pile = model.spawnCard(DEF_A, 0, 0);
+    model.movePile(pile.id, 50, 60);
+    expect(model.getPile(pile.id)).toMatchObject({ x: 50, y: 60 });
+  });
+
+  it("never allocates a new pile or changes card contents", () => {
+    const model = new TableModel();
+    const pile = model.spawnCard(DEF_A, 0, 0);
+    model.movePile(pile.id, 1, 1);
+    expect(model.allPiles()).toHaveLength(1);
+    expect(model.getPile(pile.id)!.cards).toEqual(pile.cards);
+  });
+
+  it("never merges with a nearby pile, unlike dropPile", () => {
+    const model = new TableModel();
+    const a = model.spawnCard(DEF_A, 0, 0);
+    model.spawnCard(DEF_B, 5, 5);
+    model.movePile(a.id, 5, 5); // lands exactly on top of the other pile
+    expect(model.allPiles()).toHaveLength(2); // both still separate
+  });
+
+  it("is a no-op for a pile that doesn't exist", () => {
+    const model = new TableModel();
+    expect(() => model.movePile("ghost", 1, 1)).not.toThrow();
+  });
+});
+
+describe("collapseIntoStack", () => {
+  it("combines every listed pile's cards into one, in pileIds order", () => {
+    const model = new TableModel();
+    const a = model.spawnCard(DEF_A, 0, 0);
+    const b = model.spawnCard(DEF_B, 10, 10);
+    const c = model.spawnCard(DEF_C, 20, 20);
+
+    const merged = model.collapseIntoStack([b.id, a.id, c.id], 5, 5);
+
+    expect(merged).toBeDefined();
+    expect(merged!.cards.map((card) => card.def)).toEqual([DEF_B, DEF_A, DEF_C]);
+    expect(merged!.x).toBe(5);
+    expect(merged!.y).toBe(5);
+  });
+
+  it("removes every original pile, leaving only the new one", () => {
+    const model = new TableModel();
+    const a = model.spawnCard(DEF_A, 0, 0);
+    const b = model.spawnCard(DEF_B, 0, 0);
+
+    const merged = model.collapseIntoStack([a.id, b.id], 0, 0);
+
+    expect(model.allPiles()).toHaveLength(1);
+    expect(model.getPile(a.id)).toBeUndefined();
+    expect(model.getPile(b.id)).toBeUndefined();
+    expect(model.getPile(merged!.id)).toBe(merged);
+  });
+
+  it("preserves each source pile's own card order, only concatenating across piles", () => {
+    const model = new TableModel();
+    const a = model.spawnCard(DEF_A, 0, 0);
+    a.cards.push({ def: DEF_B, faceUp: false, hiddenBy: null }); // a: [A, B] bottom-to-top
+    const c = model.spawnCard(DEF_C, 0, 0); // c: [C]
+
+    const merged = model.collapseIntoStack([a.id, c.id], 0, 0);
+
+    expect(merged!.cards.map((card) => card.def)).toEqual([DEF_A, DEF_B, DEF_C]);
+  });
+
+  it("the merged pile gets a fresh id, never one of the originals", () => {
+    const model = new TableModel();
+    const a = model.spawnCard(DEF_A, 0, 0);
+    const b = model.spawnCard(DEF_B, 0, 0);
+    const merged = model.collapseIntoStack([a.id, b.id], 0, 0);
+    expect([a.id, b.id]).not.toContain(merged!.id);
+  });
+
+  it("silently skips an id that doesn't exist, rather than throwing", () => {
+    const model = new TableModel();
+    const a = model.spawnCard(DEF_A, 0, 0);
+    const merged = model.collapseIntoStack([a.id, "ghost"], 0, 0);
+    expect(merged!.cards.map((card) => card.def)).toEqual([DEF_A]);
+  });
+
+  it("returns undefined if none of the given ids exist", () => {
+    const model = new TableModel();
+    expect(model.collapseIntoStack(["ghost1", "ghost2"], 0, 0)).toBeUndefined();
+    expect(model.allPiles()).toHaveLength(0);
+  });
+
+  it("a single real id still collapses cleanly under a fresh id", () => {
+    const model = new TableModel();
+    const a = model.spawnCard(DEF_A, 0, 0);
+    const merged = model.collapseIntoStack([a.id], 3, 4);
+    expect(merged!.cards.map((card) => card.def)).toEqual([DEF_A]);
+    expect(merged!.id).not.toBe(a.id);
+    expect(model.getPile(a.id)).toBeUndefined();
+  });
+});
+
 describe("removePile", () => {
   it("removes a pile so it no longer appears in allPiles()", () => {
     const model = new TableModel();

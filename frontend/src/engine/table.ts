@@ -49,6 +49,24 @@ const HINT_INTERVAL_MS = 120;
  * to 1 the moment the real, authoritative drop event arrives. */
 const REMOTE_DRAG_ALPHA = 0.85;
 const CURSOR_RADIUS = 6;
+/** Below this many screen pixels of movement, a background pointerdown-then-up is
+ * treated as a plain click (clearing the selection) rather than a completed box-select
+ * drag — otherwise every ordinary click-to-deselect would also require holding
+ * perfectly still. */
+const BOX_SELECT_THRESHOLD = 4;
+const SELECTION_OUTLINE_COLOR = 0x4fa8ff;
+const GROUP_HANDLE_RADIUS = 12;
+const GROUP_HANDLE_COLOR = 0xffd24f;
+
+/** Rotate the vector (x, y) by `radians`, using the same rotation convention as
+ * PixiJS's own Container.rotation (and this file's existing atan2(dx, -dy) reading of
+ * the pointer around a pivot — see makeRotateHandle/onPointerMove) — used to keep a
+ * multi-select group rigid while it rotates together around its centroid. */
+function rotateVector(x: number, y: number, radians: number): { x: number; y: number } {
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  return { x: x * cos - y * sin, y: x * sin + y * cos };
+}
 
 const KEY_TO_INPUT: Record<string, keyof CameraInput> = {
   w: "up", s: "down", a: "left", d: "right", q: "rotateCCW", e: "rotateCW",
@@ -90,13 +108,42 @@ export class TableApp implements TableView {
    * pileModel.ts's setPile/loadSnapshot doc comment). */
   private dragging: { pileId: string; view: Container; x: number; y: number; localFloating: PileState | null } | null = null;
   private rotating: { pileId: string; view: Container; radians: number } | null = null;
+  /** Multi-select (see docs/GAME_DEFINITION.md-adjacent request: "click and drag a box
+   * to select multiple cards"). `selectedPileIds` is the source of truth; each id's
+   * outline Graphics lives in `selectionOutlines` as a child of that pile's own view
+   * (see select()/deselect()). Dragging an empty patch of table draws `boxSelect`'s
+   * rectangle in screen space (not world space) so it reads correctly even while the
+   * camera is rotated (Q/E) — see the class-level note in beginGroupRotate's doc
+   * comment for why screen space matters here. This replaces the old click-drag-to-pan
+   * gesture (WASD already covers panning) — see docs/DECISIONS.md. */
+  private selectedPileIds = new Set<string>();
+  private selectionOutlines = new Map<string, Graphics>();
+  private boxSelect: { startX: number; startY: number; endX: number; endY: number; rect: Graphics } | null = null;
+  /** A drag that moves every selected pile together, rigidly, by the same screen-space
+   * delta — started instead of a normal single-pile beginDrag() when the pile clicked
+   * is already part of a 2+ selection (see beginDrag). Positions are only committed
+   * (one move-pile request/model mutation per pile) on release; see onPointerUp. */
+  private groupDragging: { startPositions: Map<string, { x: number; y: number }>; startLocalX: number; startLocalY: number; dx: number; dy: number } | null = null;
+  /** Rotating the whole selection together around its centroid ("center of mass") —
+   * see beginGroupRotate. `delta` is the running rotation since the gesture started,
+   * updated every pointermove and read back on release to compute each pile's final
+   * position/rotation. */
+  private groupRotating: {
+    centroid: { x: number; y: number };
+    startAngle: number;
+    delta: number;
+    startStates: Map<string, { x: number; y: number; rotation: number }>;
+  } | null = null;
+  /** A single handle shown at the selection's centroid once 2+ piles are selected —
+   * dragging it is what starts a group rotate (see makeGroupRotateHandle). Absent
+   * (null) whenever fewer than 2 piles are selected; see updateGroupHandle. */
+  private groupHandle: Container | null = null;
   /** Last time (performance.now()) this client sent a drag-hint — see
    * HINT_INTERVAL_MS. Reset to 0 at the start of each synced drag so the very
    * first move sends immediately rather than waiting out the throttle. */
   private lastDragHintAt = 0;
   /** Same idea as lastDragHintAt, for rotate-hint. */
   private lastRotateHintAt = 0;
-  private panning = false;
   private menuEl: HTMLDivElement | null = null;
 
   // Camera: WASD pans, Q/E rotates — see engine/camera.ts. Each player's own view is
@@ -202,6 +249,7 @@ export class TableApp implements TableView {
       this.removeView(event.pileId);
     } else if (event.type === "snapshot") {
       for (const pileId of [...this.views.keys()]) this.removeView(pileId);
+      this.clearSelection(); // ids from before a resumed/migrated snapshot may not exist any more
       this.model.loadSnapshot(event.piles);
       for (const pile of event.piles) this.mountView(pile);
     } else if (event.type === "drag-hint") {
@@ -401,11 +449,20 @@ export class TableApp implements TableView {
     view.on("pointerdown", (e: FederatedPointerEvent) => {
       e.stopPropagation();
       if (e.button === 2) return; // handled by rightclick below
+      // Clicking a pile that isn't already part of the current multi-selection acts
+      // exactly like before (drag just that one pile) and drops any existing
+      // selection; clicking one that *is* selected instead drags the whole group —
+      // see beginDrag.
+      if (!this.selectedPileIds.has(pile.id)) this.clearSelection();
       this.beginDrag(pile.id, e);
     });
     view.on("rightclick", (e: FederatedPointerEvent) => {
       e.stopPropagation();
-      this.openMenu(pile.id, e.globalX, e.globalY);
+      if (this.selectedPileIds.size > 1 && this.selectedPileIds.has(pile.id)) {
+        this.openGroupMenu(e.globalX, e.globalY);
+      } else {
+        this.openMenu(pile.id, e.globalX, e.globalY);
+      }
     });
     view.on("dblclick", (e: FederatedPointerEvent) => {
       e.stopPropagation();
@@ -461,12 +518,167 @@ export class TableApp implements TableView {
       this.views.delete(pileId);
       this.faceLayers.delete(pileId);
     }
+    // A pile that no longer exists (merged away, collapsed into a deck, removed) can't
+    // stay selected — its outline lived on `view`, which is now gone too.
+    this.selectionOutlines.delete(pileId);
+    this.deselect(pileId);
+  }
+
+  // --- Multi-select: box-select a rectangle of piles, then move/rotate/flip/hide/
+  // collapse them together. See the selectedPileIds/boxSelect/groupDragging/
+  // groupRotating field comments above for the overall design. ---
+
+  private select(pileId: string): void {
+    if (this.selectedPileIds.has(pileId)) return;
+    this.selectedPileIds.add(pileId);
+    const view = this.views.get(pileId);
+    if (view) {
+      const outline = new Graphics();
+      outline.rect(-CARD_WIDTH / 2 - 4, -CARD_HEIGHT / 2 - 4, CARD_WIDTH + 8, CARD_HEIGHT + 8);
+      outline.stroke({ width: 3, color: SELECTION_OUTLINE_COLOR });
+      // Added behind the face layer (index 0) so it reads as a border around the card
+      // rather than a rectangle drawn on top of it.
+      view.addChildAt(outline, 0);
+      this.selectionOutlines.set(pileId, outline);
+    }
+    this.updateGroupHandle();
+  }
+
+  private deselect(pileId: string): void {
+    if (!this.selectedPileIds.delete(pileId)) return;
+    const outline = this.selectionOutlines.get(pileId);
+    const view = this.views.get(pileId);
+    if (outline && view) view.removeChild(outline);
+    this.selectionOutlines.delete(pileId);
+    this.updateGroupHandle();
+  }
+
+  private clearSelection(): void {
+    for (const pileId of [...this.selectedPileIds]) this.deselect(pileId);
+  }
+
+  private selectionCentroid(): { x: number; y: number } | null {
+    let sumX = 0;
+    let sumY = 0;
+    let count = 0;
+    for (const pileId of this.selectedPileIds) {
+      const pile = this.model.getPile(pileId);
+      if (!pile) continue;
+      sumX += pile.x;
+      sumY += pile.y;
+      count++;
+    }
+    return count > 0 ? { x: sumX / count, y: sumY / count } : null;
+  }
+
+  /** Create/reposition/remove the group rotate handle to match the current selection —
+   * called whenever selection membership changes. Left alone (not re-created) during
+   * an active group drag/rotate, which reposition it directly for smoothness. */
+  private updateGroupHandle(): void {
+    if (this.selectedPileIds.size < 2) {
+      this.removeGroupHandle();
+      return;
+    }
+    const centroid = this.selectionCentroid();
+    if (!centroid) {
+      this.removeGroupHandle();
+      return;
+    }
+    if (!this.groupHandle) {
+      this.groupHandle = this.makeGroupRotateHandle();
+      this.world.addChild(this.groupHandle);
+    }
+    this.groupHandle.position.set(centroid.x, centroid.y);
+  }
+
+  private removeGroupHandle(): void {
+    if (this.groupHandle) {
+      this.world.removeChild(this.groupHandle);
+      this.groupHandle = null;
+    }
+  }
+
+  /** A diamond-shaped handle at the selection's centroid — distinct from the small
+   * circular per-pile rotate handle (makeRotateHandle) so it's clear this one rotates
+   * the whole group, not just one card. */
+  private makeGroupRotateHandle(): Container {
+    const handle = new Graphics();
+    handle.moveTo(0, -GROUP_HANDLE_RADIUS).lineTo(GROUP_HANDLE_RADIUS, 0).lineTo(0, GROUP_HANDLE_RADIUS).lineTo(-GROUP_HANDLE_RADIUS, 0).closePath();
+    handle.fill({ color: GROUP_HANDLE_COLOR, alpha: 0.85 });
+    handle.stroke({ width: 1.5, color: 0x1a1a1a });
+    handle.eventMode = "static";
+    handle.cursor = "grab";
+    handle.on("pointerdown", (e: FederatedPointerEvent) => {
+      e.stopPropagation();
+      this.beginGroupRotate(e);
+    });
+    return handle;
+  }
+
+  private beginGroupDrag(e: FederatedPointerEvent): void {
+    const local = this.world.toLocal(e.global);
+    const startPositions = new Map<string, { x: number; y: number }>();
+    for (const pileId of this.selectedPileIds) {
+      const pile = this.model.getPile(pileId);
+      if (pile) startPositions.set(pileId, { x: pile.x, y: pile.y });
+    }
+    this.groupDragging = { startPositions, startLocalX: local.x, startLocalY: local.y, dx: 0, dy: 0 };
+    for (const pileId of startPositions.keys()) {
+      const view = this.views.get(pileId);
+      if (view) view.alpha = 0.85;
+    }
+  }
+
+  /** Mirrors the per-pile rotate handle's pointerdown (makeRotateHandle), but for the
+   * whole selection at once: records everyone's starting (x, y, rotation) and the
+   * pointer's starting bearing around the centroid, so onPointerMove/onPointerUp only
+   * need to track how much that bearing has changed. */
+  private beginGroupRotate(e: FederatedPointerEvent): void {
+    const centroid = this.selectionCentroid();
+    if (!centroid) return;
+    const local = this.world.toLocal(e.global);
+    const startAngle = Math.atan2(local.x - centroid.x, -(local.y - centroid.y));
+    const startStates = new Map<string, { x: number; y: number; rotation: number }>();
+    for (const pileId of this.selectedPileIds) {
+      const pile = this.model.getPile(pileId);
+      if (pile) startStates.set(pileId, { x: pile.x, y: pile.y, rotation: pile.rotation });
+    }
+    this.groupRotating = { centroid, startAngle, delta: 0, startStates };
+  }
+
+  private doGroupFlip(pileIds: string[]): void {
+    for (const pileId of pileIds) this.doFlip(pileId);
+  }
+
+  private doGroupToggleHide(pileIds: string[]): void {
+    for (const pileId of pileIds) this.doToggleHide(pileId);
+  }
+
+  /** "Collapse into a deck" — merge the whole selection into one new pile at its
+   * centroid, via TableModel.collapseIntoStack (see its own doc comment). */
+  private doGroupCollapse(pileIds: string[]): void {
+    const centroid = this.selectionCentroid() ?? { x: 0, y: 0 };
+    this.clearSelection();
+    if (this.syncClient) {
+      this.syncClient.sendRequest({ type: "collapse-into-stack", pileIds, x: centroid.x, y: centroid.y });
+    } else {
+      const pile = this.model.collapseIntoStack(pileIds, centroid.x, centroid.y);
+      for (const pileId of pileIds) this.removeView(pileId);
+      if (pile) this.mountView(pile);
+    }
   }
 
   // --- Dragging ---
 
   private beginDrag(pileId: string, e: FederatedPointerEvent): void {
-    if (this.dragging) return;
+    if (this.dragging || this.groupDragging) return;
+
+    // Dragging a pile that's part of a 2+ selection moves the whole group together
+    // instead — see beginGroupDrag and the selectedPileIds field comment.
+    if (this.selectedPileIds.size > 1 && this.selectedPileIds.has(pileId)) {
+      this.beginGroupDrag(e);
+      return;
+    }
 
     if (this.syncClient) {
       // Don't touch the model at all: splitting a stack allocates a new pile id, and
@@ -535,7 +747,26 @@ export class TableApp implements TableView {
   }
 
   private onBackgroundPointerDown(e: FederatedPointerEvent): void {
-    if (e.target === this.app.stage) this.panning = true;
+    if (e.target !== this.app.stage) return;
+    // Starts a box-select drag in screen space (e.global), not world space — see the
+    // boxSelect field's doc comment for why (the camera can be rotated with Q/E, so an
+    // axis-aligned rectangle only means "what's visually inside the box" in screen
+    // space). This replaces the old click-drag-to-pan gesture; WASD still pans.
+    const rect = new Graphics();
+    this.app.stage.addChild(rect);
+    this.boxSelect = { startX: e.global.x, startY: e.global.y, endX: e.global.x, endY: e.global.y, rect };
+  }
+
+  private redrawBoxSelectRect(): void {
+    const { startX, startY, endX, endY, rect } = this.boxSelect!;
+    rect.clear();
+    const x = Math.min(startX, endX);
+    const y = Math.min(startY, endY);
+    const w = Math.abs(endX - startX);
+    const h = Math.abs(endY - startY);
+    rect.rect(x, y, w, h);
+    rect.fill({ color: SELECTION_OUTLINE_COLOR, alpha: 0.12 });
+    rect.stroke({ width: 1, color: SELECTION_OUTLINE_COLOR });
   }
 
   private onPointerMove(e: FederatedPointerEvent): void {
@@ -545,7 +776,34 @@ export class TableApp implements TableView {
     const local = this.world.toLocal(e.global);
     this.maybeSendCursorHint(local.x, local.y);
 
-    if (this.rotating) {
+    if (this.boxSelect) {
+      this.boxSelect.endX = e.global.x;
+      this.boxSelect.endY = e.global.y;
+      this.redrawBoxSelectRect();
+    } else if (this.groupRotating) {
+      const { centroid, startAngle, startStates } = this.groupRotating;
+      const angle = Math.atan2(local.x - centroid.x, -(local.y - centroid.y));
+      this.groupRotating.delta = angle - startAngle;
+      for (const [pileId, start] of startStates) {
+        const view = this.views.get(pileId);
+        if (!view) continue;
+        const offset = rotateVector(start.x - centroid.x, start.y - centroid.y, this.groupRotating.delta);
+        view.position.set(centroid.x + offset.x, centroid.y + offset.y);
+        view.rotation = start.rotation + this.groupRotating.delta;
+      }
+    } else if (this.groupDragging) {
+      const g = this.groupDragging;
+      g.dx = local.x - g.startLocalX;
+      g.dy = local.y - g.startLocalY;
+      for (const [pileId, start] of g.startPositions) {
+        const view = this.views.get(pileId);
+        if (view) view.position.set(start.x + g.dx, start.y + g.dy);
+      }
+      if (this.groupHandle) {
+        const centroid = this.selectionCentroid();
+        if (centroid) this.groupHandle.position.set(centroid.x + g.dx, centroid.y + g.dy);
+      }
+    } else if (this.rotating) {
       const angle = Math.atan2(local.x - this.rotating.view.position.x, -(local.y - this.rotating.view.position.y));
       this.rotating.radians = angle;
       this.rotating.view.rotation = angle;
@@ -561,14 +819,75 @@ export class TableApp implements TableView {
       } else {
         this.maybeSendDragHint(this.dragging.pileId, local.x, local.y);
       }
-    } else if (this.panning) {
-      this.world.position.x += e.movementX;
-      this.world.position.y += e.movementY;
     }
   }
 
   private onPointerUp(): void {
-    this.panning = false;
+    if (this.boxSelect) {
+      const { startX, startY, endX, endY, rect } = this.boxSelect;
+      this.boxSelect = null;
+      this.app.stage.removeChild(rect);
+
+      if (Math.abs(endX - startX) < BOX_SELECT_THRESHOLD && Math.abs(endY - startY) < BOX_SELECT_THRESHOLD) {
+        // Too small a drag to be a real box — treat it as a plain click on empty
+        // table, which clears whatever was selected.
+        this.clearSelection();
+      } else {
+        const minX = Math.min(startX, endX);
+        const maxX = Math.max(startX, endX);
+        const minY = Math.min(startY, endY);
+        const maxY = Math.max(startY, endY);
+        const inBox: string[] = [];
+        for (const [pileId, view] of this.views) {
+          const global = view.getGlobalPosition();
+          if (global.x >= minX && global.x <= maxX && global.y >= minY && global.y <= maxY) inBox.push(pileId);
+        }
+        this.clearSelection();
+        for (const pileId of inBox) this.select(pileId);
+      }
+    }
+
+    if (this.groupRotating) {
+      const { centroid, delta, startStates } = this.groupRotating;
+      this.groupRotating = null;
+      for (const [pileId, start] of startStates) {
+        const offset = rotateVector(start.x - centroid.x, start.y - centroid.y, delta);
+        const x = centroid.x + offset.x;
+        const y = centroid.y + offset.y;
+        const rotation = start.rotation + delta;
+        if (this.syncClient) {
+          this.syncClient.sendRequest({ type: "move-pile", pileId, x, y });
+          this.syncClient.sendRequest({ type: "set-rotation", pileId, radians: rotation });
+        } else {
+          this.model.movePile(pileId, x, y);
+          this.model.setRotation(pileId, rotation);
+          const view = this.views.get(pileId);
+          if (view) {
+            view.position.set(x, y);
+            view.rotation = rotation;
+          }
+        }
+      }
+      this.updateGroupHandle();
+    }
+
+    if (this.groupDragging) {
+      const { startPositions, dx, dy } = this.groupDragging;
+      this.groupDragging = null;
+      for (const [pileId, start] of startPositions) {
+        const x = start.x + dx;
+        const y = start.y + dy;
+        const view = this.views.get(pileId);
+        if (view) view.alpha = 1;
+        if (this.syncClient) {
+          this.syncClient.sendRequest({ type: "move-pile", pileId, x, y });
+        } else {
+          this.model.movePile(pileId, x, y);
+          if (view) view.position.set(x, y);
+        }
+      }
+      this.updateGroupHandle();
+    }
 
     if (this.rotating) {
       const { pileId, radians } = this.rotating;
@@ -684,6 +1003,36 @@ export class TableApp implements TableView {
       items.push(["Shuffle", () => this.shuffle(pileId)]);
       items.push(["Draw top card", () => this.drawTopCard(pileId)]);
     }
+
+    for (const [label, action] of items) {
+      const btn = document.createElement("button");
+      btn.textContent = label;
+      btn.onclick = () => {
+        action();
+        this.closeMenu();
+      };
+      menu.appendChild(btn);
+    }
+    document.body.appendChild(menu);
+    this.menuEl = menu;
+  }
+
+  /** The right-click menu for a multi-selected pile — flip/hide/collapse the whole
+   * selection at once, rather than the single-pile menu's per-card actions. */
+  private openGroupMenu(screenX: number, screenY: number): void {
+    this.closeMenu();
+    const pileIds = [...this.selectedPileIds];
+
+    const menu = document.createElement("div");
+    menu.className = "card-menu";
+    menu.style.left = `${screenX}px`;
+    menu.style.top = `${screenY}px`;
+
+    const items: [string, () => void][] = [
+      [`Flip all (${pileIds.length})`, () => this.doGroupFlip(pileIds)],
+      [`Hide/unhide all (${pileIds.length})`, () => this.doGroupToggleHide(pileIds)],
+      ["Collapse into a deck", () => this.doGroupCollapse(pileIds)],
+    ];
 
     for (const [label, action] of items) {
       const btn = document.createElement("button");
