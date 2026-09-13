@@ -83,7 +83,7 @@ export function AdminDashboard({ me, onLoggedOut }: { me: Me; onLoggedOut: () =>
 
       {error && <p class="error">{error}</p>}
 
-      <section class="panel">
+      <section class="dashboard-section">
         <h2>Your rooms</h2>
         <ul class="room-list">
           {roomList.map((r) => (
@@ -123,7 +123,7 @@ export function AdminDashboard({ me, onLoggedOut }: { me: Me; onLoggedOut: () =>
         </form>
       </section>
 
-      <section class="panel">
+      <section class="dashboard-section">
         <h2>Users</h2>
         <ul class="room-list">
           {userList.map((u) => (

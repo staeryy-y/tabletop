@@ -74,12 +74,12 @@ export function GamePackages() {
       </header>
 
       {editing ? (
-        <section class="panel">
+        <section class="dashboard-section">
           <h2>{editing.id ? `Edit "${editing.pkg.name}"` : "New game package"}</h2>
           <GamePackageEditor initial={editing.pkg} onSave={save} onCancel={() => setEditing(null)} />
         </section>
       ) : (
-        <section class="panel">
+        <section class="dashboard-section">
           <p class="hint">
             Rules content — tracks, dice, cards, pieces, macros — for rooms to use. Cards can have images or
             just text; pieces can have images or an emoji/symbol. Lives in this browser only (see

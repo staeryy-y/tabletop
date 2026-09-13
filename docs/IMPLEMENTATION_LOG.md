@@ -103,6 +103,17 @@ that touched this log.
 
 Newest first. Fixed items move to "Implemented" above with a note here of what changed.
 
+- **(Fixed)** The dashboard and game-package manager pages were stuck at 360px wide on
+  any normal-width screen. Cause: `.panel` (the small, deliberately-360px-capped shape
+  meant for the login/account-setup/room-join dialogs) was also being reused, wrongly,
+  for the dashboard's room/user sections and the whole game-package manager — genuinely
+  wide content stuck in a narrow box. Split into `.panel` (still 360px, for the small
+  dialogs) and a new `.dashboard-section` (fills its container) for everything else;
+  `AdminDashboard.tsx`/`GamePackages.tsx` switched to the new class. The heading-overflow
+  fix earlier in this log was a real, separate bug — this narrow-panel one predates this
+  session entirely and just became far more noticeable once the package editor grew an
+  actual grid layout worth seeing at full width.
+
 - **(Fixed)** feedback1.md's batch: table-state persistence (see "Implemented" —
   client-side IndexedDB, not server round trips), the dashboard heading-overflow bug,
   the game-package manager splitting into its own `#/packages` page, card sets spawning

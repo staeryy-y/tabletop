@@ -65,15 +65,29 @@ h3 {
   padding: 16px;
 }
 
-.panel {
+/* .panel is specifically the small, centered auth-dialog shape (login, account setup,
+   room join) — capped at 360px on purpose, since those are short forms that look lost
+   stretched full-width. Wider content (the dashboard's room/user lists, the
+   game-package manager) uses .dashboard-section instead, which shares the same visual
+   box but fills its container — see the "super narrow, horizontally" fix: those were
+   wrongly reusing .panel and getting stuck at 360px on any normal-width screen. */
+.panel,
+.dashboard-section {
   background: var(--panel);
   border: 2px solid var(--border);
   border-radius: var(--radius);
   padding: 24px;
-  width: min(360px, 100%);
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.panel {
+  width: min(360px, 100%);
+}
+
+.dashboard-section {
+  width: 100%;
 }
 
 .panel h1 {
