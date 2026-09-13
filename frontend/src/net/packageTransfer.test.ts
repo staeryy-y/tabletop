@@ -149,7 +149,7 @@ class FakeTransport implements PackageTransport {
   sentToHost: unknown[] = [];
   sentToPeers: { peerId: string; message: unknown }[] = [];
 
-  setSideChannel(channel: SideChannel): void {
+  addSideChannel(channel: SideChannel): void {
     this.channel = channel;
   }
   sendToHost(message: unknown): void {

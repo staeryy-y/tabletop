@@ -99,7 +99,7 @@ export class PackageReassembler {
  * pattern (SignalingLike, TableSyncClient, ...) of depending on an interface small
  * enough to fake in a test rather than the concrete class. */
 export interface PackageTransport {
-  setSideChannel(channel: SideChannel): void;
+  addSideChannel(channel: SideChannel): void;
   sendToHost(message: unknown): void;
   sendToPeer(peerId: string, message: unknown): void;
 }
@@ -118,7 +118,7 @@ export class PackageDistributor {
   private reassembler = new PackageReassembler();
 
   constructor(private transport: PackageTransport, private onReceived: (pkg: GamePackage) => void) {
-    transport.setSideChannel({
+    transport.addSideChannel({
       isSideChannelMessage: isPackageTransferMessage,
       handle: (fromPeerId, message) => this.handleMessage(fromPeerId, message as PackageTransferMessage),
     });

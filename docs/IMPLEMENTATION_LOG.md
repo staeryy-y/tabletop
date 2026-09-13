@@ -32,14 +32,15 @@ it's actually fixed, with a one-line note on what changed.
   mid-stream: the GM is always host when connected, not merely preferred on migration.
 
 All of the above have backend (pytest) and/or frontend (Vitest) test coverage; see each
-module's own test file. 360 frontend + 105 backend tests passing as of the last commit
-before this log was created.
+module's own test file. 378 frontend + 105 backend tests passing as of the last commit
+that touched this log.
 
 ## Implemented, beyond the milestone checklist
 
 - Live per-player presence: color (random default, user-changeable swatch picker),
   eyes-closed flag — both synced via `set-presence`/`presence-changed` over signaling,
-  shown in the player list. (Eyes-closed's *effect* is incomplete — see gaps below.)
+  shown in the player list, on the in-canvas player token, and enforced locally as a
+  full-screen blank-out on the closed-eyed player's own client (see "Fixed" below).
 - Default per-player colored token, auto-seated in a polygon around the table
   (`seating.ts`) sized to player count.
 - WASD camera pan, Q/E camera rotate.
@@ -49,34 +50,26 @@ before this log was created.
 - Game-package editor (`GamePackageEditor.tsx`): tracks, dice, card sets (text or
   uploaded-image faces), piece sets (emoji/symbol or uploaded-image faces), macros,
   image upload with a 2MB cap, IndexedDB-backed storage (`packageStore.ts`).
+- Chat, synced across every connected player (`net/chatSync.ts`, `ChatDistributor`),
+  riding the same host-authoritative link as everything else via
+  `RoomConnection.SideChannel` (now generalized to support more than one channel — see
+  `net/packageTransfer.ts`, the first consumer). History (capped at 200 messages) is
+  requested from the host on join/host-changed and kept alive by every client that's
+  ever seen it, so a later-promoted host can still serve it onward. Presented as a
+  toggleable dropdown from the bottom HUD toolbar rather than an always-visible panel.
+- A game-HUD layout replacing the old sidebar: the table canvas fills the whole
+  viewport, with a floating player-list window pinned top-left, a floating pill-shaped
+  action bar pinned bottom-center (spawn, eyes-closed toggle, color swatches, chat
+  toggle, back-to-dashboard), and the chat dropdown floating just above the toolbar.
+  Not the full pixel-art pass (still a separate open item below) — this is layout/
+  chrome, not a visual-asset overhaul.
 
 ## Known gaps / open feedback
 
-Newest first.
+Newest first. Fixed items move to "Implemented" above with a note here of what changed.
 
-- **(Not started) UI visual design doesn't read as a game.** Current layout is a
-  conventional webapp: a persistent left sidebar holding room name, presence, color
-  picker, chat, and hints, plus a top toolbar. Requested instead: floating HUD-style
-  elements over the table like a retro RPG — a floating action bar/toolbar anchored to
-  the bottom of the screen instead of the sidebar, and the player list as its own
-  floating window pinned to the top-left rather than embedded in a sidebar. No sidebar
-  chrome at all in the target design. Affects `RoomTable.tsx` and its CSS most directly;
-  likely touches Chat's presentation too (see below).
-- **(Not started) Eyes-closed does nothing to your own view.** `presence-changed`
-  already broadcasts the flag correctly and the player *list* already shows a closed-eye
-  indicator for whoever has it set — but toggling your own eyes closed doesn't actually
-  blank/obscure your own screen (the stated purpose: a reveal moment in Avalon/Mafia
-  where players close their eyes and shouldn't see the table). Also missing: the
-  in-canvas player *token* (`mountPlayerToken`/`redrawPlayerToken` in `table.ts`) doesn't
-  reflect eyes-closed at all — only the sidebar list does.
-- **(Not started) Chat isn't synced across players at all.** `Chat.tsx`'s own doc
-  comment already admits this ("Local to this tab only for now... needs the P2P layer,
-  M6"), and M6 is now done but chat was never wired to it — a real functional gap, not
-  just cosmetic. Also requested: present it as a dropdown with history rather than an
-  always-visible inline panel. Likely needs its own request/event pair in
-  `syncProtocol.ts` (or a simpler host-relayed broadcast, since chat history doesn't
-  need to be part of the table snapshot/model) plus a `RoomTable.tsx`/`RoomConnection`
-  wiring pass similar to what package transfer got.
+- **(Fixed)** UI visual design, eyes-closed's effect, and chat sync — see "Implemented"
+  above for what actually landed for each.
 - **(Not started) Card images don't render on the canvas.** An image-based card front
   (built in the package editor) falls back to a plain color in PixiJS — see
   `card.ts`/`RoomTable.tsx`'s `cardDefsFromPackage` doc comments. Flagged repeatedly,
@@ -87,6 +80,10 @@ Newest first.
 - **(Minor, not started) Rotate-handle drags have no live hint.** The drag-hint feature
   only covers card dragging (matching the specific request that added it); rotating via
   the handle still only updates other clients on release.
+- **(Minor, new) The old sidebar's instructional hints (how to right-click/drag/rotate,
+  what's actually synced) were dropped, not relocated**, when the sidebar was replaced
+  by the floating HUD — there's currently no in-room help text at all. A `?`/help toggle
+  in the HUD toolbar would be the natural place to put it back.
 
 ## Explicitly out of scope for v1 (see PLAN.md, unchanged)
 

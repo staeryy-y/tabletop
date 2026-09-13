@@ -1,20 +1,17 @@
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { DiceContext, RollContext, RollError, TrackContext, formatRollResult, roll } from "../engine/roll";
+import { ChatMessage } from "../net/chatSync";
 import { GamePackage } from "../packages/gamePackage";
 
 // Chat + /roll + macros, driven by the room's game package (tracks/dice/macros — see
-// docs/GAME_DEFINITION.md). Local to this tab only for now: chat isn't synced across
-// browsers yet (that needs the P2P layer, M6 in docs/PLAN.md), same as the table itself.
+// docs/GAME_DEFINITION.md). The message log itself is owned by the caller (RoomTable.tsx,
+// via net/chatSync.ts) and handed down as `messages` — every post goes out through
+// `onPost` rather than local state, so it's synced across every connected player, host
+// or peer.
 //
 // There's no character-sheet/actor system yet, so each player's current track values
 // live here as a tiny "quick sheet" — local numbers only you can see/edit, not synced
 // to anyone else. `/roll dex` resolves against *your own* quick-sheet value for `dex`.
-
-interface Message {
-  author: string;
-  text: string;
-  isError?: boolean;
-}
 
 function buildDiceContext(pkg: GamePackage): DiceContext {
   const dice: DiceContext = {};
@@ -24,13 +21,26 @@ function buildDiceContext(pkg: GamePackage): DiceContext {
   return dice;
 }
 
-export function Chat({ pkg, displayName }: { pkg: GamePackage | null; displayName: string }) {
-  const [messages, setMessages] = useState<Message[]>([]);
+interface ChatProps {
+  pkg: GamePackage | null;
+  displayName: string;
+  messages: ChatMessage[];
+  onPost: (message: ChatMessage) => void;
+}
+
+export function Chat({ pkg, displayName, messages, onPost }: ChatProps) {
   const [input, setInput] = useState("");
   const [trackValues, setTrackValues] = useState<Record<string, number>>({});
+  const logRef = useRef<HTMLDivElement>(null);
 
-  function post(author: string, text: string, isError = false) {
-    setMessages((prev) => [...prev, { author, text, isError }]);
+  // Keep the log scrolled to the newest message as history/new messages arrive.
+  useEffect(() => {
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages]);
+
+  function post(text: string, isError = false) {
+    onPost({ author: displayName, text, isError });
   }
 
   function buildRollContext(): RollContext {
@@ -45,9 +55,9 @@ export function Chat({ pkg, displayName }: { pkg: GamePackage | null; displayNam
   function runRoll(expr: string) {
     try {
       const result = roll(expr, buildRollContext());
-      post(displayName, `/roll ${expr} → ${formatRollResult(result)}`);
+      post(`/roll ${expr} → ${formatRollResult(result)}`);
     } catch (err) {
-      post(displayName, err instanceof RollError ? err.message : String(err), true);
+      post(err instanceof RollError ? err.message : String(err), true);
     }
   }
 
@@ -59,20 +69,20 @@ export function Chat({ pkg, displayName }: { pkg: GamePackage | null; displayNam
     if (rollMatch) {
       runRoll(rollMatch[1]);
     } else {
-      post(displayName, text);
+      post(text);
     }
     setInput("");
   }
 
   return (
     <div class="chat">
-      <div class="chat-log">
+      <div class="chat-log" ref={logRef}>
         {messages.map((m, i) => (
           <div class={"chat-message" + (m.isError ? " error" : "")} key={i}>
             <strong>{m.author}:</strong> {m.text}
           </div>
         ))}
-        {messages.length === 0 && <p class="hint">Chat is local to this tab for now (not yet synced — see M6).</p>}
+        {messages.length === 0 && <p class="hint">No messages yet. Say hello, or try /roll 1d20.</p>}
       </div>
 
       {pkg && pkg.tracks.length > 0 && (

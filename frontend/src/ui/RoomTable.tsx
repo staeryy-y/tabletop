@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { CardDef } from "../engine/card";
 import { PileState } from "../engine/pileModel";
 import { TableApp } from "../engine/table";
+import { ChatDistributor, ChatMessage } from "../net/chatSync";
 import { PackageDistributor } from "../net/packageTransfer";
 import { RoomConnection } from "../net/roomConnection";
 import { Peer, SignalingConnection } from "../net/signaling";
@@ -63,6 +64,7 @@ export function RoomTable({ slug }: { slug: string }) {
   // "custom" room's package needs P2P transfer at all (see packageDistributorRef).
   const gameDefRefRef = useRef<string | null>(null);
   const packageDistributorRef = useRef<PackageDistributor | null>(null);
+  const chatDistributorRef = useRef<ChatDistributor | null>(null);
   const [peers, setPeers] = useState<Map<string, Peer>>(new Map());
   const [selfId, setSelfId] = useState<string | null>(null);
   const [hostId, setHostId] = useState<string | null>(null);
@@ -70,6 +72,8 @@ export function RoomTable({ slug }: { slug: string }) {
   const [roomName, setRoomName] = useState(slug);
   const [pkg, setPkg] = useState<GamePackage | null>(null);
   const [displayName, setDisplayName] = useState("");
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatOpen, setChatOpen] = useState(false);
 
   useEffect(() => {
     const token = loadRoomToken(slug);
@@ -158,9 +162,18 @@ export function RoomTable({ slug }: { slug: string }) {
         });
         packageDistributorRef.current = distributor;
 
+        // Chat rides the same side-channel mechanism (net/chatSync.ts) — unlike the
+        // package, every room type needs this, not just "custom" ones.
+        const chatDistributor = new ChatDistributor(roomConn, (message) => {
+          if (disposed) return;
+          setChatMessages((prev) => [...prev, message]);
+        });
+        chatDistributorRef.current = chatDistributor;
+
         if (event.hostPeerId !== null && event.hostPeerId !== event.peerId) {
           table.setSyncClient(roomConn.becomePeerOf(event.hostPeerId));
           if (gameDefRef === "custom") distributor.requestFromHostIfNeeded();
+          chatDistributor.requestHistoryIfNeeded();
         }
 
         (async () => {
@@ -223,6 +236,7 @@ export function RoomTable({ slug }: { slug: string }) {
           // already called, e.g. it's the one that picked it, or it received it
           // earlier from whoever was host before).
           if (gameDefRefRef.current === "custom") packageDistributorRef.current?.requestFromHostIfNeeded();
+          chatDistributorRef.current?.requestHistoryIfNeeded();
         }
       } else if (event.type === "you-are-host") {
         setHostId(mySelfId);
@@ -244,6 +258,7 @@ export function RoomTable({ slug }: { slug: string }) {
       roomConnRef.current?.destroy();
       roomConnRef.current = null;
       packageDistributorRef.current = null;
+      chatDistributorRef.current = null;
       table.destroy();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -251,7 +266,7 @@ export function RoomTable({ slug }: { slug: string }) {
 
   // Keep the table's default player tokens (engine/seating.ts) in sync with presence.
   useEffect(() => {
-    tableRef.current?.setPlayers([...peers.values()].map((p) => ({ peerId: p.peerId, name: p.name, color: p.color })));
+    tableRef.current?.setPlayers([...peers.values()].map((p) => ({ peerId: p.peerId, name: p.name, color: p.color, eyesClosed: p.eyesClosed })));
   }, [peers]);
 
   const me = selfId ? peers.get(selfId) : undefined;
@@ -275,41 +290,24 @@ export function RoomTable({ slug }: { slug: string }) {
     connRef.current?.setPresence({ color });
   }
 
+  function postChatMessage(message: ChatMessage) {
+    chatDistributorRef.current?.post(message);
+  }
+
+  const eyesClosed = me?.eyesClosed ?? false;
+
   return (
     <div class="room-page">
-      <aside class="sidebar">
+      <div class="table-canvas" ref={canvasHost} />
+
+      {/* Floating HUD, not a sidebar — see docs/IMPLEMENTATION_LOG.md's earlier note on
+          why this replaced the old webapp-style layout. */}
+      <div class="hud-players">
         <h2>{roomName}</h2>
-        <p class="hint">
-          <a href="#/">&larr; dashboard</a>
-          {pkg && ` · ${pkg.name}`}
-        </p>
-
-        <h3>You</h3>
-        <div class="my-presence">
-          <button
-            class={"eyes-toggle" + (me?.eyesClosed ? " closed" : "")}
-            onClick={toggleEyesClosed}
-            title={me?.eyesClosed ? "Open your eyes" : "Close your eyes (for reveal moments, e.g. Avalon/Mafia)"}
-          >
-            {me?.eyesClosed ? "\u{1F648} Eyes closed" : "\u{1F441} Eyes open"}
-          </button>
-          <div class="swatches">
-            {COLOR_SWATCHES.map((c) => (
-              <button
-                key={c}
-                class={"swatch" + (me?.color === c ? " selected" : "")}
-                style={{ background: c }}
-                onClick={() => pickColor(c)}
-                aria-label={`use color ${c}`}
-              />
-            ))}
-          </div>
-        </div>
-
-        <h3>Presence</h3>
+        {pkg && <p class="hint hud-pkg-name">{pkg.name}</p>}
         <ul class="peer-list">
           {[...peers.values()].map((p) => (
-            <li key={p.peerId}>
+            <li key={p.peerId} class={p.eyesClosed ? "eyes-closed" : ""}>
               <span class="peer-dot" style={{ background: p.color }} />
               {p.name}
               {p.peerId === selfId && " (you)"}
@@ -320,26 +318,50 @@ export function RoomTable({ slug }: { slug: string }) {
           ))}
           {peers.size === 0 && <li class="hint">Connecting…</li>}
         </ul>
-
-        <Chat pkg={pkg} displayName={displayName} />
-
-        <p class="hint">
-          Right-click a card: flip, hide, rotate 90°, or (once stacked) shuffle/draw. Drag the small
-          handle above a card to rotate it freely. Drag one card onto another to stack them. WASD pans
-          the camera, Q/E rotates it — handy when players are seated on different sides of the table.
-        </p>
-        <p class="hint">
-          Cards and pieces are synced live with everyone else in the room, one host at a time
-          holding the canonical table and everyone else mirroring it, over a direct WebRTC
-          connection to the host (falling back to relaying through the server if a direct
-          connection can't be established). A custom game package transfers the same way, peer to
-          peer, to whoever doesn't already have it. Chat is still local to this tab only.
-        </p>
-      </aside>
-      <div class="table-toolbar">
-        <button onClick={spawnRandomCard}>+ Spawn card</button>
       </div>
-      <div class="table-canvas" ref={canvasHost} />
+
+      {chatOpen && (
+        <div class="hud-chat">
+          <Chat pkg={pkg} displayName={displayName} messages={chatMessages} onPost={postChatMessage} />
+        </div>
+      )}
+
+      <div class="hud-toolbar">
+        <a href="#/" class="hud-icon-button" title="Back to dashboard">
+          &larr;
+        </a>
+        <button onClick={spawnRandomCard} title="Spawn a random card">
+          + Card
+        </button>
+        <button
+          class={"hud-icon-button" + (eyesClosed ? " active" : "")}
+          onClick={toggleEyesClosed}
+          title={eyesClosed ? "Open your eyes" : "Close your eyes (for reveal moments, e.g. Avalon/Mafia)"}
+        >
+          {eyesClosed ? "\u{1F648}" : "\u{1F441}"}
+        </button>
+        <div class="swatches">
+          {COLOR_SWATCHES.map((c) => (
+            <button
+              key={c}
+              class={"swatch" + (me?.color === c ? " selected" : "")}
+              style={{ background: c }}
+              onClick={() => pickColor(c)}
+              aria-label={`use color ${c}`}
+            />
+          ))}
+        </div>
+        <button class={"hud-icon-button" + (chatOpen ? " active" : "")} onClick={() => setChatOpen((o) => !o)}>
+          {"\u{1F4AC}"} Chat
+        </button>
+      </div>
+
+      {eyesClosed && (
+        <div class="eyes-closed-overlay">
+          <p>{"\u{1F648}"} Your eyes are closed.</p>
+          <button onClick={toggleEyesClosed}>Open your eyes</button>
+        </div>
+      )}
     </div>
   );
 }

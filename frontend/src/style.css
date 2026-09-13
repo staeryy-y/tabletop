@@ -145,32 +145,53 @@ button:disabled {
   width: auto;
 }
 
-/* Room table page */
+/* Room table page — a floating HUD over the full-bleed table, like a game overlay
+   rather than a webapp with a sidebar (see docs/IMPLEMENTATION_LOG.md). Every HUD panel
+   sits on `position: fixed` above `.table-canvas`, which fills the whole viewport. */
 .room-page {
-  display: grid;
-  grid-template-columns: 260px 1fr;
-  grid-template-rows: auto 1fr;
+  position: relative;
   height: 100vh;
+  overflow: hidden;
 }
 
-.sidebar {
-  grid-row: 1 / 3;
-  background: var(--panel);
-  border-right: 1px solid var(--border);
-  padding: 16px;
+.hud-players {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  z-index: 100;
+  max-width: min(260px, calc(100vw - 28px));
+  max-height: min(50vh, 420px);
   overflow-y: auto;
+  padding: 10px 14px;
+  background: rgba(27, 26, 33, 0.88);
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(3px);
+  font-family: monospace;
 }
 
-.sidebar h2 {
-  margin-top: 0;
-  font-size: 1.1rem;
+.hud-players h2 {
+  margin: 0 0 2px;
+  font-size: 1rem;
+}
+
+.hud-pkg-name {
+  margin: 0 0 8px;
 }
 
 .peer-list {
   list-style: none;
   padding: 0;
-  margin: 0 0 16px;
-  font-size: 0.9rem;
+  margin: 0;
+  font-size: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.peer-list li.eyes-closed {
+  opacity: 0.65;
 }
 
 .peer-dot {
@@ -182,31 +203,62 @@ button:disabled {
   border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
-.my-presence {
-  margin-bottom: 16px;
+.hud-toolbar {
+  position: fixed;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(27, 26, 33, 0.9);
+  border: 2px solid var(--border);
+  border-radius: 999px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(3px);
+  max-width: calc(100vw - 24px);
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
-.eyes-toggle {
-  width: 100%;
-  margin-bottom: 8px;
+.hud-toolbar button,
+.hud-icon-button {
+  font-size: 0.85rem;
+  padding: 8px 12px;
+  border-radius: 999px;
+}
+
+a.hud-icon-button {
+  display: inline-flex;
+  align-items: center;
+  background: var(--border);
+  color: var(--text);
+  text-decoration: none;
+}
+
+button.hud-icon-button {
   background: var(--border);
   color: var(--text);
 }
 
-.eyes-toggle.closed {
+button.hud-icon-button.active {
   background: var(--accent);
   color: #111;
 }
 
-.swatches {
+.hud-toolbar .swatches {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px;
+  padding: 0 4px;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
 }
 
 .swatch {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   padding: 0;
   border: 2px solid transparent;
@@ -214,6 +266,35 @@ button:disabled {
 
 .swatch.selected {
   border-color: var(--text);
+}
+
+.hud-chat {
+  position: fixed;
+  bottom: 68px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 99;
+  width: min(420px, calc(100vw - 28px));
+  background: rgba(27, 26, 33, 0.94);
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(3px);
+  padding: 10px 14px;
+}
+
+.eyes-closed-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  background: #000;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  font-size: 1.1rem;
 }
 
 /* Game package editor */
@@ -303,11 +384,6 @@ button:disabled {
   align-items: center;
 }
 
-.table-toolbar {
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-}
-
 .table-canvas {
   width: 100%;
   height: 100%;
@@ -323,13 +399,10 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-bottom: 16px;
-  border-top: 1px solid var(--border);
-  padding-top: 10px;
 }
 
 .chat-log {
-  max-height: 160px;
+  max-height: 240px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;

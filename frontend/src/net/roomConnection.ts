@@ -24,12 +24,14 @@ export interface TableView {
   applyEvent(event: TableEvent): void;
 }
 
-/** A second, independent message protocol allowed to ride the same per-peer links this
- * class already manages — see net/packageTransfer.ts, the one consumer so far. Every
- * incoming message is offered to `isSideChannelMessage` first; only if that returns
- * false is it interpreted as table-sync traffic (a TableRequest/TableEvent or the
- * request-snapshot catch-up message below). At most one side channel is supported —
- * plenty for now, and simpler than a general pub/sub registry nothing else needs yet. */
+/** An independent message protocol allowed to ride the same per-peer links this class
+ * already manages — see net/packageTransfer.ts and net/chatSync.ts, its two consumers
+ * so far. Every incoming message is offered to each registered channel's
+ * `isSideChannelMessage` in registration order; the first one that claims it gets
+ * `handle`d and the message never reaches table-sync interpretation (a
+ * TableRequest/TableEvent or the request-snapshot catch-up message below) at all. Each
+ * channel's messages need a `type` namespace distinct from every other's (by
+ * convention, a `"<name>:"` prefix — "pkg:", "chat:") so they never collide. */
 export interface SideChannel {
   isSideChannelMessage(message: unknown): boolean;
   handle(fromPeerId: string, message: unknown): void;
@@ -60,7 +62,7 @@ export class RoomConnection {
   private hostSync: HostTableSync | null = null;
   private peerLinks = new Map<string, PeerLink>();
   private linkToHost: PeerLink | null = null;
-  private sideChannel: SideChannel | null = null;
+  private sideChannels: SideChannel[] = [];
 
   constructor(
     private model: TableModel,
@@ -103,8 +105,8 @@ export class RoomConnection {
     const link = this.makeLink(this.signaling, hostPeerId, "initiator");
     this.linkToHost = link;
     link.onMessage((msg) => {
-      if (this.sideChannel?.isSideChannelMessage(msg)) this.sideChannel.handle(hostPeerId, msg);
-      else this.view.applyEvent(msg as TableEvent);
+      if (this.tryHandleAsSideChannel(hostPeerId, msg)) return;
+      this.view.applyEvent(msg as TableEvent);
     });
     link.send(REQUEST_SNAPSHOT);
     return { sendRequest: (req) => link.send(req) };
@@ -120,8 +122,8 @@ export class RoomConnection {
     // The host always answers rather than initiates — see becomePeerOf's comment.
     const link = this.makeLink(this.signaling, peerId, "answerer");
     link.onMessage((msg) => {
-      if (this.sideChannel?.isSideChannelMessage(msg)) this.sideChannel.handle(peerId, msg);
-      else if (isRequestSnapshot(msg)) this.hostSync!.sendSnapshotTo(peerId);
+      if (this.tryHandleAsSideChannel(peerId, msg)) return;
+      if (isRequestSnapshot(msg)) this.hostSync!.sendSnapshotTo(peerId);
       else this.hostSync!.handleRequest(peerId, msg as TableRequest);
     });
     this.peerLinks.set(peerId, link);
@@ -134,12 +136,22 @@ export class RoomConnection {
     this.peerLinks.delete(peerId);
   }
 
-  /** Register the (at most one) side channel — see the SideChannel doc comment above.
-   * Safe to call once, before any role is established; every link created afterward
-   * (and already-created links, since the check happens per-message, not per-link)
-   * offers messages to it first. */
-  setSideChannel(channel: SideChannel): void {
-    this.sideChannel = channel;
+  /** Register another side channel — see the SideChannel doc comment above. Safe to
+   * call any number of times, before or after a role is established; every link
+   * (existing or created afterward) offers messages to every registered channel, in
+   * registration order, since the check happens per-message, not per-link. */
+  addSideChannel(channel: SideChannel): void {
+    this.sideChannels.push(channel);
+  }
+
+  private tryHandleAsSideChannel(fromPeerId: string, message: unknown): boolean {
+    for (const channel of this.sideChannels) {
+      if (channel.isSideChannelMessage(message)) {
+        channel.handle(fromPeerId, message);
+        return true;
+      }
+    }
+    return false;
   }
 
   /** Send a side-channel message directly to the host — meaningful only while this
@@ -153,6 +165,12 @@ export class RoomConnection {
    * already left, or this client isn't host at all). */
   sendToPeer(peerId: string, message: unknown): void {
     this.peerLinks.get(peerId)?.send(message);
+  }
+
+  /** Send a side-channel message to every currently-connected peer — meaningful only
+   * while this client is host (a harmless no-op, sending to no one, otherwise). */
+  broadcastToPeers(message: unknown): void {
+    for (const link of this.peerLinks.values()) link.send(message);
   }
 
   /** The current table state, suitable for the periodic recovery upload described in

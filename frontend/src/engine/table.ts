@@ -39,6 +39,7 @@ interface PlayerInfo {
   peerId: string;
   name: string;
   color: string;
+  eyesClosed: boolean;
 }
 
 export class TableApp implements TableView {
@@ -263,9 +264,14 @@ export class TableApp implements TableView {
     g.fill({ color: player.color });
     g.stroke({ width: 2, color: 0x1a1a1a });
     view.addChild(g);
+    // Eyes-closed replaces the initial-letter glyph with the same closed-eye emoji the
+    // presence list uses, so anyone glancing at the table (not just the sidebar) can
+    // tell who's not looking — the actual reveal-moment mechanic (docs/GAME_DEFINITION.md
+    // adjacent: Avalon/Mafia-style team reveals) needs everyone else to be able to see
+    // this, not just the player themselves.
     const label = new Text({
-      text: player.name.slice(0, 1).toUpperCase(),
-      style: { fontFamily: "monospace", fontSize: 14, fill: 0x1a1a1a, fontWeight: "bold" },
+      text: player.eyesClosed ? "\u{1F648}" : player.name.slice(0, 1).toUpperCase(),
+      style: { fontFamily: "monospace", fontSize: player.eyesClosed ? 12 : 14, fill: 0x1a1a1a, fontWeight: "bold" },
     });
     label.anchor.set(0.5);
     view.addChild(label);

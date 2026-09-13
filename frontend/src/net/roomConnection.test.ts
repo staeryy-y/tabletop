@@ -285,3 +285,83 @@ describe("RoomConnection — currentSnapshot", () => {
     expect(conn.currentSnapshot()).toEqual(model.allPiles());
   });
 });
+
+describe("RoomConnection — side channels (net/packageTransfer.ts, net/chatSync.ts)", () => {
+  it("a registered side channel intercepts its own messages instead of them reaching the table view", () => {
+    const net = new TestNetwork();
+    const hostView = new RecordingView();
+    const hostConn = new RoomConnection(new TableModel(), hostView, {} as never, "host", net.linkFactory("host"));
+    hostConn.becomeHost([]);
+    hostConn.addPeer("alice");
+
+    const peerView = new RecordingView();
+    const peerConn = new RoomConnection(new TableModel(), peerView, {} as never, "alice", net.linkFactory("alice"));
+    peerConn.becomePeerOf("host");
+
+    const received: { fromPeerId: string; message: unknown }[] = [];
+    hostConn.addSideChannel({
+      isSideChannelMessage: (m) => typeof m === "object" && m !== null && (m as { type?: unknown }).type === "custom:ping",
+      handle: (fromPeerId, message) => received.push({ fromPeerId, message }),
+    });
+
+    peerConn.sendToHost({ type: "custom:ping", n: 1 });
+
+    expect(received).toEqual([{ fromPeerId: "alice", message: { type: "custom:ping", n: 1 } }]);
+    // Definitely never reached table-sync interpretation as some bogus TableEvent —
+    // the peer's view only ever saw its own real, expected connect-time snapshot.
+    expect(peerView.events).toEqual([{ type: "snapshot", piles: [] }]);
+  });
+
+  it("two independently-registered side channels coexist without either seeing the other's messages", () => {
+    const net = new TestNetwork();
+    const hostConn = new RoomConnection(new TableModel(), new RecordingView(), {} as never, "host", net.linkFactory("host"));
+    hostConn.becomeHost([]);
+    hostConn.addPeer("alice");
+    const peerConn = new RoomConnection(new TableModel(), new RecordingView(), {} as never, "alice", net.linkFactory("alice"));
+    peerConn.becomePeerOf("host");
+
+    const channelA: unknown[] = [];
+    const channelB: unknown[] = [];
+    hostConn.addSideChannel({
+      isSideChannelMessage: (m) => (m as { type?: unknown }).type === "a:msg",
+      handle: (_from, m) => channelA.push(m),
+    });
+    hostConn.addSideChannel({
+      isSideChannelMessage: (m) => (m as { type?: unknown }).type === "b:msg",
+      handle: (_from, m) => channelB.push(m),
+    });
+
+    peerConn.sendToHost({ type: "a:msg" });
+    peerConn.sendToHost({ type: "b:msg" });
+
+    expect(channelA).toEqual([{ type: "a:msg" }]);
+    expect(channelB).toEqual([{ type: "b:msg" }]);
+  });
+
+  it("broadcastToPeers reaches every currently-connected peer", () => {
+    const net = new TestNetwork();
+    const hostConn = new RoomConnection(new TableModel(), new RecordingView(), {} as never, "host", net.linkFactory("host"));
+    hostConn.becomeHost([]);
+    hostConn.addPeer("alice");
+    hostConn.addPeer("bob");
+
+    const aliceReceived: unknown[] = [];
+    const bobReceived: unknown[] = [];
+    const aliceConn = new RoomConnection(new TableModel(), new RecordingView(), {} as never, "alice", net.linkFactory("alice"));
+    aliceConn.becomePeerOf("host");
+    aliceConn.addSideChannel({ isSideChannelMessage: (m) => (m as { type?: unknown }).type === "x", handle: (_f, m) => aliceReceived.push(m) });
+    const bobConn = new RoomConnection(new TableModel(), new RecordingView(), {} as never, "bob", net.linkFactory("bob"));
+    bobConn.becomePeerOf("host");
+    bobConn.addSideChannel({ isSideChannelMessage: (m) => (m as { type?: unknown }).type === "x", handle: (_f, m) => bobReceived.push(m) });
+
+    hostConn.broadcastToPeers({ type: "x", n: 1 });
+
+    expect(aliceReceived).toEqual([{ type: "x", n: 1 }]);
+    expect(bobReceived).toEqual([{ type: "x", n: 1 }]);
+  });
+
+  it("broadcastToPeers is a harmless no-op when this client isn't host", () => {
+    const conn = new RoomConnection(new TableModel(), new RecordingView(), {} as never, "alice");
+    expect(() => conn.broadcastToPeers({ type: "x" })).not.toThrow();
+  });
+});
