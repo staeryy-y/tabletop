@@ -10,6 +10,8 @@
 import { Application, Container, FederatedPointerEvent, Graphics, Text } from "pixi.js";
 import { CameraInput, NO_CAMERA_INPUT, stepCamera } from "./camera";
 import { CARD_HEIGHT, CARD_WIDTH, CardDef, renderCard } from "./card";
+import { TableSyncClient, TableView } from "../net/roomConnection";
+import { TableEvent } from "../net/syncProtocol";
 import { PileState, TableModel } from "./pileModel";
 import { computeSeatPositions } from "./seating";
 
@@ -30,7 +32,7 @@ interface PlayerInfo {
   color: string;
 }
 
-export class TableApp {
+export class TableApp implements TableView {
   private app = new Application();
   private world = new Container();
   private model = new TableModel();
@@ -40,10 +42,25 @@ export class TableApp {
    * assigns a real one (net/signaling.ts's `welcome`); a single-tab sandbox with no
    * room never needs to change it. */
   private selfPeerId = "local";
+  /** Routes every mutating action through the host-authoritative sync protocol
+   * (net/syncProtocol.ts) once the room assigns one (net/roomConnection.ts) — host or
+   * peer, TableApp doesn't need to know which; it just calls sendRequest() and waits
+   * for the resulting applyEvent() call to actually update the model/view. Null only
+   * in the brief window before a room connection exists (or for a bare, room-less
+   * sandbox), during which actions fall back to mutating the local model directly. */
+  private syncClient: TableSyncClient | null = null;
   private views = new Map<string, Container>();
   private faceLayers = new Map<string, Container>();
-  private dragging: { pile: PileState; view: Container } | null = null;
-  private rotating: { pileId: string; view: Container } | null = null;
+  /** `localFloating` is only ever set when there's no syncClient (a bare, room-less
+   * sandbox): it's the actual detached PileState pickUpTop() returned, mutated in place
+   * as the pointer moves and handed to dropPile() on release — exactly the pre-M6
+   * behavior. Once a syncClient exists, dragging never touches the model at all (see
+   * beginDrag/onPointerMove/onPointerUp below): `view` just follows the pointer, and one
+   * `pick-up-and-drop` request is sent at release with wherever it ended up, since only
+   * the host is allowed to allocate the pile id a stack-split would need (see
+   * pileModel.ts's setPile/loadSnapshot doc comment). */
+  private dragging: { pileId: string; view: Container; x: number; y: number; localFloating: PileState | null } | null = null;
+  private rotating: { pileId: string; view: Container; radians: number } | null = null;
   private panning = false;
   private menuEl: HTMLDivElement | null = null;
 
@@ -103,6 +120,37 @@ export class TableApp {
   setSelfPeerId(peerId: string): void {
     this.selfPeerId = peerId;
     for (const pileId of this.views.keys()) this.redraw(pileId);
+  }
+
+  /** Start routing actions through the sync protocol instead of mutating the local
+   * model directly — called once net/roomConnection.ts establishes this client's role
+   * (host or peer). See the `syncClient` field comment for why this can be set late. */
+  setSyncClient(client: TableSyncClient): void {
+    this.syncClient = client;
+  }
+
+  /** TableView: net/roomConnection.ts calls this with whatever the host broadcasts
+   * (including the host's own actions looped back to itself) — the *only* way the
+   * model/view change once a syncClient is set. See syncProtocol.ts's TableEvent. */
+  applyEvent(event: TableEvent): void {
+    if (event.type === "pile-upserted") {
+      this.model.setPile(event.pile);
+      const view = this.views.get(event.pile.id);
+      if (view) {
+        view.position.set(event.pile.x, event.pile.y);
+        view.rotation = event.pile.rotation;
+        this.redraw(event.pile.id);
+      } else {
+        this.mountView(event.pile);
+      }
+    } else if (event.type === "pile-removed") {
+      this.model.removePile(event.pileId);
+      this.removeView(event.pileId);
+    } else if (event.type === "snapshot") {
+      for (const pileId of [...this.views.keys()]) this.removeView(pileId);
+      this.model.loadSnapshot(event.piles);
+      for (const pile of event.piles) this.mountView(pile);
+    }
   }
 
   // --- Camera: WASD pan, Q/E rotate (engine/camera.ts does the actual math) ---
@@ -193,10 +241,18 @@ export class TableApp {
   }
 
   /** Spawn a brand-new standalone pile (a GM-only action per the object model — see
-   * docs/ARCHITECTURE.md "Roles: GM vs. players"; this demo doesn't gate it yet). */
+   * docs/ARCHITECTURE.md "Roles: GM vs. players"; this demo doesn't gate it yet). Once a
+   * syncClient is set, this — like every other mutating method below — sends a request
+   * and waits for applyEvent() to actually create it, rather than mutating the local
+   * model itself: only the host's TableModel is ever allowed to allocate a pile id
+   * (see pileModel.ts's setPile/loadSnapshot doc comment), and TableApp doesn't know
+   * whether it's the host. */
   spawnCard(def: CardDef, worldX: number, worldY: number): void {
-    const pile = this.model.spawnCard(def, worldX, worldY);
-    this.mountView(pile);
+    if (this.syncClient) {
+      this.syncClient.sendRequest({ type: "spawn", def, x: worldX, y: worldY });
+    } else {
+      this.mountView(this.model.spawnCard(def, worldX, worldY));
+    }
   }
 
   // --- Wiring a PileState to an on-screen Container. The view is purely a rendering
@@ -220,8 +276,7 @@ export class TableApp {
     });
     view.on("dblclick", (e: FederatedPointerEvent) => {
       e.stopPropagation();
-      this.model.flip(pile.id);
-      this.redraw(pile.id);
+      this.doFlip(pile.id);
     });
 
     // The face is drawn into its own child container, not `view` directly, so redraw()
@@ -252,7 +307,7 @@ export class TableApp {
     handle.on("pointerdown", (e: FederatedPointerEvent) => {
       e.stopPropagation();
       const view = this.views.get(pileId);
-      if (view) this.rotating = { pileId, view };
+      if (view) this.rotating = { pileId, view, radians: view.rotation };
     });
     return handle;
   }
@@ -278,19 +333,35 @@ export class TableApp {
 
   private beginDrag(pileId: string, e: FederatedPointerEvent): void {
     if (this.dragging) return;
-    const floating = this.model.pickUpTop(pileId);
-    if (!floating) return;
 
-    const sourceView = this.views.get(pileId);
-    if (floating.id === pileId) {
-      // The whole pile was picked up (it only had one card) — reuse its existing view.
-      this.dragging = { pile: floating, view: sourceView! };
+    if (this.syncClient) {
+      // Don't touch the model at all: splitting a stack allocates a new pile id, and
+      // only the host is allowed to do that (see the `dragging` field's doc comment
+      // above). Just grab the pile's existing view and follow the pointer with it —
+      // pick-up-and-drop is a single atomic request sent once, on release.
+      const view = this.views.get(pileId);
+      const pile = this.model.getPile(pileId);
+      if (!view || !pile) return;
+      this.dragging = { pileId, view, x: pile.x, y: pile.y, localFloating: null };
     } else {
-      // Only the top card came off; the remainder pile stays put under its own view.
-      if (sourceView) this.redraw(pileId);
-      const view = this.mountView(floating);
-      this.dragging = { pile: floating, view };
+      // No syncClient (a bare, room-less sandbox) — the pre-M6 behavior: actually split
+      // the stack locally right away, since there's no other peer's model to diverge
+      // from.
+      const floating = this.model.pickUpTop(pileId);
+      if (!floating) return;
+      const sourceView = this.views.get(pileId);
+      let view: Container;
+      if (floating.id === pileId) {
+        // The whole pile was picked up (it only had one card) — reuse its existing view.
+        view = sourceView!;
+      } else {
+        // Only the top card came off; the remainder pile stays put under its own view.
+        if (sourceView) this.redraw(pileId);
+        view = this.mountView(floating);
+      }
+      this.dragging = { pileId: floating.id, view, x: floating.x, y: floating.y, localFloating: floating };
     }
+
     this.dragging.view.alpha = 0.85;
     this.dragging.view.zIndex = 1000;
   }
@@ -303,13 +374,18 @@ export class TableApp {
     if (this.rotating) {
       const local = this.world.toLocal(e.global);
       const angle = Math.atan2(local.x - this.rotating.view.position.x, -(local.y - this.rotating.view.position.y));
-      this.model.setRotation(this.rotating.pileId, angle);
+      this.rotating.radians = angle;
       this.rotating.view.rotation = angle;
+      if (!this.syncClient) this.model.setRotation(this.rotating.pileId, angle);
     } else if (this.dragging) {
       const local = this.world.toLocal(e.global);
-      this.dragging.pile.x = local.x;
-      this.dragging.pile.y = local.y;
+      this.dragging.x = local.x;
+      this.dragging.y = local.y;
       this.dragging.view.position.set(local.x, local.y);
+      if (this.dragging.localFloating) {
+        this.dragging.localFloating.x = local.x;
+        this.dragging.localFloating.y = local.y;
+      }
     } else if (this.panning) {
       this.world.position.x += e.movementX;
       this.world.position.y += e.movementY;
@@ -318,19 +394,35 @@ export class TableApp {
 
   private onPointerUp(): void {
     this.panning = false;
-    this.rotating = null;
+
+    if (this.rotating) {
+      const { pileId, radians } = this.rotating;
+      this.rotating = null;
+      if (this.syncClient) this.syncClient.sendRequest({ type: "set-rotation", pileId, radians });
+      // else: onPointerMove already applied it directly to the model as it moved.
+    }
+
     if (!this.dragging) return;
-    const { pile, view } = this.dragging;
+    const { pileId, view, x, y, localFloating } = this.dragging;
     this.dragging = null;
     view.alpha = 1;
 
-    const result = this.model.dropPile(pile, pile.x, pile.y, MERGE_RADIUS);
+    if (this.syncClient) {
+      // One request for the whole gesture — see the `dragging` field's doc comment.
+      // Whatever actually happens (placed, merged, or a stack-split leaving a
+      // remainder behind) comes back through applyEvent(), which is the only thing
+      // allowed to move this view now.
+      this.syncClient.sendRequest({ type: "pick-up-and-drop", pileId, x, y, mergeRadius: MERGE_RADIUS });
+      return;
+    }
+
+    const result = this.model.dropPile(localFloating!, x, y, MERGE_RADIUS);
     if (result.kind === "merged") {
-      this.removeView(pile.id);
+      this.removeView(pileId);
       this.redraw(result.targetId);
     } else {
-      this.views.set(pile.id, view);
-      this.redraw(pile.id);
+      this.views.set(pileId, view);
+      this.redraw(pileId);
     }
   }
 
@@ -345,7 +437,29 @@ export class TableApp {
   // docs/NETWORKING.md "Trust model": any player can do any of these to any pile —
   // there's no ownership lock, matching a physical table. ---
 
+  private doFlip(pileId: string): void {
+    if (this.syncClient) {
+      this.syncClient.sendRequest({ type: "flip", pileId });
+      return;
+    }
+    this.model.flip(pileId);
+    this.redraw(pileId);
+  }
+
+  private doToggleHide(pileId: string): void {
+    if (this.syncClient) {
+      this.syncClient.sendRequest({ type: "toggle-hide", pileId });
+      return;
+    }
+    this.model.toggleHide(pileId, this.selfPeerId);
+    this.redraw(pileId);
+  }
+
   private rotate90(pileId: string): void {
+    if (this.syncClient) {
+      this.syncClient.sendRequest({ type: "rotate-by", pileId, deltaRadians: Math.PI / 2 });
+      return;
+    }
     this.model.rotate90(pileId);
     const pile = this.model.getPile(pileId);
     const view = this.views.get(pileId);
@@ -353,11 +467,20 @@ export class TableApp {
   }
 
   private shuffle(pileId: string): void {
+    if (this.syncClient) {
+      // Resolved once by the host so every peer agrees — see syncProtocol.ts.
+      this.syncClient.sendRequest({ type: "shuffle", pileId });
+      return;
+    }
     this.model.shuffle(pileId);
     this.redraw(pileId);
   }
 
   private drawTopCard(pileId: string): void {
+    if (this.syncClient) {
+      this.syncClient.sendRequest({ type: "draw-top", pileId, offsetX: CARD_WIDTH * 0.7, offsetY: 0 });
+      return;
+    }
     const drawn = this.model.drawTop(pileId, CARD_WIDTH * 0.7, 0);
     if (!drawn) return;
     this.redraw(pileId);
@@ -378,8 +501,8 @@ export class TableApp {
     menu.style.top = `${screenY}px`;
 
     const items: [string, () => void][] = [
-      ["Flip", () => { this.model.flip(pileId); this.redraw(pileId); }],
-      [top.hiddenBy !== null ? "Unhide" : "Hide", () => { this.model.toggleHide(pileId, this.selfPeerId); this.redraw(pileId); }],
+      ["Flip", () => this.doFlip(pileId)],
+      [top.hiddenBy !== null ? "Unhide" : "Hide", () => this.doToggleHide(pileId)],
       ["Rotate 90°", () => this.rotate90(pileId)],
     ];
     if (pile.cards.length > 1) {
