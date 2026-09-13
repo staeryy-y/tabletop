@@ -14,7 +14,10 @@ import { PackageStore } from "../packages/packageStore";
 import { defaultCardSetPosition, defaultPieceSetPosition, pieceEntryOffset } from "../packages/startingLayout";
 import { loadRoomToken } from "../roomToken";
 import { getRememberedRoomPackageId } from "../roomPackageChoice";
+import { UI_TEXT } from "../uiText";
 import { Chat } from "./Chat";
+
+const T = UI_TEXT.roomTable;
 
 /** How often the host persists its table state — locally (IndexedDB, net/tableStore.ts,
  * so *this browser* reopening the room resumes instantly with no server round trip at
@@ -28,7 +31,7 @@ const SNAPSHOT_PERSIST_INTERVAL_MS = 5000;
 // own — proves out Card/Stack/Hide interaction (M3) even for a bare freeform room.
 const DEMO_DECK: CardDef[] = ["A", "B", "C", "D", "E", "F"].map((letter, i) => ({
   id: `demo-${letter}`,
-  front: { title: `Card ${letter}`, color: [0xf4d35e, 0xee964b, 0xf95738, 0x0d3b66, 0x3fa796, 0x9381ff][i], text: "Demo content" },
+  front: { title: T.demoCardTitle(letter), color: [0xf4d35e, 0xee964b, 0xf95738, 0x0d3b66, 0x3fa796, 0x9381ff][i], text: T.demoCardText },
   back: { title: "", color: 0x333333 },
 }));
 
@@ -291,7 +294,7 @@ export function RoomTable({ slug }: { slug: string }) {
             // moment real content arrives. Guarded on loadedPkgRef so this can't
             // clobber a package that already arrived over the wire before this
             // (IndexedDB-bound) check even finished.
-            const placeholder = createEmptyPackage("(waiting for game package from host…)");
+            const placeholder = createEmptyPackage(T.placeholderPackageName);
             setPkg(placeholder);
           }
         })();
@@ -424,20 +427,20 @@ export function RoomTable({ slug }: { slug: string }) {
         <h2>{roomName}</h2>
         {pkg && <p class="hint hud-pkg-name">{pkg.name}</p>}
         <button class="hud-invite-button" onClick={copyInviteLink}>
-          {linkCopied ? "Copied!" : "\u{1F517} Invite link"}
+          {linkCopied ? T.inviteLinkCopied : T.inviteLinkButton}
         </button>
         <ul class="peer-list">
           {[...peers.values()].map((p) => (
             <li key={p.peerId} class={p.eyesClosed ? "eyes-closed" : ""}>
               <span class="peer-dot" style={{ background: p.color }} />
               {p.name}
-              {p.peerId === selfId && " (you)"}
-              {p.peerId === hostId && " • host"}
-              {p.peerId === gmId && " • GM"}
-              {p.eyesClosed && " • \u{1F648}"}
+              {p.peerId === selfId && T.youSuffix}
+              {p.peerId === hostId && T.hostSuffix}
+              {p.peerId === gmId && T.gmSuffix}
+              {p.eyesClosed && T.eyesClosedSuffix}
             </li>
           ))}
-          {peers.size === 0 && <li class="hint">Connecting…</li>}
+          {peers.size === 0 && <li class="hint">{T.connectingHint}</li>}
         </ul>
       </div>
 
@@ -450,41 +453,36 @@ export function RoomTable({ slug }: { slug: string }) {
       {helpOpen && (
         <div class="hud-chat hud-help">
           <p>
-            <strong>Right-click</strong> a card: flip, hide, rotate 90°, or (once stacked) shuffle/draw top.
+            <strong>{T.help.cardActionsLead}</strong>
+            {T.help.cardActionsRest}
           </p>
-          <p>Drag the small handle above a card to rotate it freely. Drag one card onto another to stack them.</p>
+          <p>{T.help.cardDragRotate}</p>
           <p>
-            <strong>Drag a box</strong> over empty table to select several cards, then move/rotate them together, or
-            right-click the selection to flip/hide all of them or collapse them into a deck.
+            <strong>{T.help.multiSelectLead}</strong>
+            {T.help.multiSelectRest}
           </p>
+          <p>{T.help.pieces}</p>
           <p>
-            Pieces (board tiles, standees) never stack — right-click one to rotate it 90° or remove it, or drag its
-            own handle to rotate it freely.
+            <strong>{T.help.cameraLead}</strong>
+            {T.help.cameraRest}
           </p>
-          <p>
-            <strong>WASD</strong> pans the camera, <strong>Q/E</strong> rotates it — handy when players are seated
-            on different sides of the table.
-          </p>
-          <p>
-            Cards and pieces sync live with everyone in the room over a direct connection to the host (falling back
-            to relaying through the server if a direct connection can't be established).
-          </p>
+          <p>{T.help.sync}</p>
         </div>
       )}
 
       <div class="hud-toolbar">
-        <a href="#/" class="hud-icon-button" title="Back to dashboard">
+        <a href="#/" class="hud-icon-button" title={T.backToDashboardTitle}>
           &larr;
         </a>
         {isHost && (
-          <button onClick={spawnRandomCard} title="Spawn a random card">
-            + Card
+          <button onClick={spawnRandomCard} title={T.spawnCardTitle}>
+            {T.spawnCardButton}
           </button>
         )}
         <button
           class={"hud-icon-button" + (eyesClosed ? " active" : "")}
           onClick={toggleEyesClosed}
-          title={eyesClosed ? "Open your eyes" : "Close your eyes (for reveal moments, e.g. Avalon/Mafia)"}
+          title={eyesClosed ? T.openEyesTitle : T.closeEyesTitle}
         >
           {eyesClosed ? "\u{1F648}" : "\u{1F441}"}
         </button>
@@ -495,7 +493,7 @@ export function RoomTable({ slug }: { slug: string }) {
             setChatOpen(false);
             setHelpOpen(false);
           }}
-          title="Change your color"
+          title={T.changeColorTitle}
         >
           <span class="hud-color-preview" style={{ background: me?.color ?? "#888888" }} />
         </button>
@@ -507,7 +505,7 @@ export function RoomTable({ slug }: { slug: string }) {
             setColorMenuOpen(false);
           }}
         >
-          {"\u{1F4AC}"} Chat
+          {T.chatButton}
         </button>
         <button
           class={"hud-icon-button" + (helpOpen ? " active" : "")}
@@ -516,9 +514,9 @@ export function RoomTable({ slug }: { slug: string }) {
             setChatOpen(false);
             setColorMenuOpen(false);
           }}
-          title="How to play"
+          title={T.howToPlayTitle}
         >
-          ?
+          {T.howToPlayButton}
         </button>
       </div>
 
@@ -534,7 +532,7 @@ export function RoomTable({ slug }: { slug: string }) {
                   pickColor(c);
                   setColorMenuOpen(false);
                 }}
-                aria-label={`use color ${c}`}
+                aria-label={T.colorSwatchAriaLabel(c)}
               />
             ))}
           </div>
@@ -543,8 +541,8 @@ export function RoomTable({ slug }: { slug: string }) {
 
       {eyesClosed && (
         <div class="eyes-closed-overlay">
-          <p>{"\u{1F648}"} Your eyes are closed.</p>
-          <button onClick={toggleEyesClosed}>Open your eyes</button>
+          <p>{T.eyesClosedOverlayText}</p>
+          <button onClick={toggleEyesClosed}>{T.openEyesTitle}</button>
         </div>
       )}
     </div>

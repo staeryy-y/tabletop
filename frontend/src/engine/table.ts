@@ -15,6 +15,9 @@ import { TableEvent } from "../net/syncProtocol";
 import { PieceState, PileState, TableModel } from "./pileModel";
 import { PieceDef, PIECE_SIZE, renderPiece } from "./piece";
 import { computeSeatPositions } from "./seating";
+import { UI_TEXT } from "../uiText";
+
+const T = UI_TEXT.tableMenu;
 
 // Pixel-art visual theme (docs/ARCHITECTURE.md "Visual style", D12): every texture
 // PixiJS creates from here on (card art loaded by engine/card.ts included) scales with
@@ -659,8 +662,8 @@ export class TableApp implements TableView {
     menu.style.top = `${screenY}px`;
 
     const items: [string, () => void][] = [
-      ["Rotate 90°", () => this.rotatePiece90(pieceId)],
-      ["Remove", () => this.doRemovePiece(pieceId)],
+      [T.rotate90, () => this.rotatePiece90(pieceId)],
+      [T.remove, () => this.doRemovePiece(pieceId)],
     ];
     for (const [label, action] of items) {
       const btn = document.createElement("button");
@@ -1168,13 +1171,13 @@ export class TableApp implements TableView {
     menu.style.top = `${screenY}px`;
 
     const items: [string, () => void][] = [
-      ["Flip", () => this.doFlip(pileId)],
-      [top.hiddenBy !== null ? "Unhide" : "Hide", () => this.doToggleHide(pileId)],
-      ["Rotate 90°", () => this.rotate90(pileId)],
+      [T.flip, () => this.doFlip(pileId)],
+      [top.hiddenBy !== null ? T.unhide : T.hide, () => this.doToggleHide(pileId)],
+      [T.rotate90, () => this.rotate90(pileId)],
     ];
     if (pile.cards.length > 1) {
-      items.push(["Shuffle", () => this.shuffle(pileId)]);
-      items.push(["Draw top card", () => this.drawTopCard(pileId)]);
+      items.push([T.shuffle, () => this.shuffle(pileId)]);
+      items.push([T.drawTopCard, () => this.drawTopCard(pileId)]);
     }
 
     for (const [label, action] of items) {
@@ -1202,9 +1205,9 @@ export class TableApp implements TableView {
     menu.style.top = `${screenY}px`;
 
     const items: [string, () => void][] = [
-      [`Flip all (${pileIds.length})`, () => this.doGroupFlip(pileIds)],
-      [`Hide/unhide all (${pileIds.length})`, () => this.doGroupToggleHide(pileIds)],
-      ["Collapse into a deck", () => this.doGroupCollapse(pileIds)],
+      [T.flipAll(pileIds.length), () => this.doGroupFlip(pileIds)],
+      [T.hideUnhideAll(pileIds.length), () => this.doGroupToggleHide(pileIds)],
+      [T.collapseIntoDeck, () => this.doGroupCollapse(pileIds)],
     ];
 
     for (const [label, action] of items) {

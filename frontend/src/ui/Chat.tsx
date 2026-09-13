@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { DiceContext, RollContext, RollError, TrackContext, formatRollResult, roll } from "../engine/roll";
 import { ChatMessage } from "../net/chatSync";
 import { GamePackage } from "../packages/gamePackage";
+import { UI_TEXT } from "../uiText";
+
+const T = UI_TEXT.chat;
 
 // Chat + /roll + macros, driven by the room's game package (tracks/dice/macros — see
 // docs/GAME_DEFINITION.md). The message log itself is owned by the caller (RoomTable.tsx,
@@ -82,12 +85,12 @@ export function Chat({ pkg, displayName, messages, onPost }: ChatProps) {
             <strong>{m.author}:</strong> {m.text}
           </div>
         ))}
-        {messages.length === 0 && <p class="hint">No messages yet. Say hello, or try /roll 1d20.</p>}
+        {messages.length === 0 && <p class="hint">{T.noMessagesHint}</p>}
       </div>
 
       {pkg && pkg.tracks.length > 0 && (
         <details class="quick-sheet">
-          <summary>Your sheet ({pkg.name})</summary>
+          <summary>{T.quickSheetSummary(pkg.name)}</summary>
           {pkg.tracks.map((t) => (
             <label key={t.key} class="quick-sheet-row">
               {t.label}
@@ -114,10 +117,10 @@ export function Chat({ pkg, displayName, messages, onPost }: ChatProps) {
       <form class="chat-input" onSubmit={handleSubmit}>
         <input
           value={input}
-          placeholder="/roll 1d20 + dex, or just chat"
+          placeholder={T.inputPlaceholder}
           onInput={(e) => setInput((e.target as HTMLInputElement).value)}
         />
-        <button type="submit">Send</button>
+        <button type="submit">{T.send}</button>
       </form>
     </div>
   );

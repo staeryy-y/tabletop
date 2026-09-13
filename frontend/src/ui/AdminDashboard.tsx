@@ -2,7 +2,9 @@ import { useEffect, useState } from "preact/hooks";
 import { ApiError, Me, RoomSummary, UserSummary, auth, rooms, users } from "../net/api";
 import { StoredPackage, PackageStore } from "../packages/packageStore";
 import { rememberRoomPackageId } from "../roomPackageChoice";
+import { UI_TEXT } from "../uiText";
 
+const T = UI_TEXT.adminDashboard;
 const packageStore = new PackageStore();
 
 export function AdminDashboard({ me, onLoggedOut }: { me: Me; onLoggedOut: () => void }) {
@@ -50,7 +52,7 @@ export function AdminDashboard({ me, onLoggedOut }: { me: Me; onLoggedOut: () =>
   }
 
   async function deleteRoom(slug: string, name: string) {
-    if (!confirm(`Delete room "${name}"? This cannot be undone.`)) return;
+    if (!confirm(T.deleteRoomConfirm(name))) return;
     setError(null);
     try {
       await rooms.delete(slug);
@@ -82,20 +84,21 @@ export function AdminDashboard({ me, onLoggedOut }: { me: Me; onLoggedOut: () =>
   return (
     <div class="dashboard">
       <header>
-        <h1>rpg-tabletop</h1>
+        <h1>{T.title}</h1>
         <nav>
-          <a href="#/packages">Game packages</a>
+          <a href="#/packages">{T.gamePackagesNavLink}</a>
         </nav>
         <div>
-          Logged in as <strong>{me.username}</strong>
-          <button onClick={logout}>Log out</button>
+          {T.loggedInAsPrefix}
+          <strong>{me.username}</strong>
+          <button onClick={logout}>{T.logOut}</button>
         </div>
       </header>
 
       {error && <p class="error">{error}</p>}
 
       <section class="dashboard-section">
-        <h2>Your rooms</h2>
+        <h2>{T.yourRoomsHeading}</h2>
         <ul class="room-list">
           {roomList.map((r) => (
             <li key={r.slug}>
@@ -103,58 +106,58 @@ export function AdminDashboard({ me, onLoggedOut }: { me: Me; onLoggedOut: () =>
               <span class="hint">
                 {" "}
                 &middot; {r.gameDefRef} {r.hasPassword ? "\u{1F512}" : ""} &middot;{" "}
-                <a href={`#/join/${r.slug}`}>guest link</a>
+                <a href={`#/join/${r.slug}`}>{T.guestLinkLabel}</a>
               </span>{" "}
               <button class="room-delete-button" onClick={() => deleteRoom(r.slug, r.name)}>
-                Delete
+                {T.delete}
               </button>
             </li>
           ))}
-          {roomList.length === 0 && <li class="hint">No rooms yet — create one below.</li>}
+          {roomList.length === 0 && <li class="hint">{T.noRoomsHint}</li>}
         </ul>
         <form onSubmit={createRoom}>
           <input
-            placeholder="Room name"
+            placeholder={T.roomNamePlaceholder}
             value={roomName}
             onInput={(e) => setRoomName((e.target as HTMLInputElement).value)}
             required
           />
           <input
-            placeholder="Password (optional)"
+            placeholder={T.passwordOptionalPlaceholder}
             value={roomPassword}
             onInput={(e) => setRoomPassword((e.target as HTMLInputElement).value)}
           />
           <select value={roomPackage} onChange={(e) => setRoomPackage((e.target as HTMLSelectElement).value)}>
-            <option value="bundled:generic-freeform">Generic Freeform</option>
-            <option value="bundled:dnd5e-srd">D&amp;D 5e (SRD)</option>
+            <option value="bundled:generic-freeform">{T.genericFreeformOption}</option>
+            <option value="bundled:dnd5e-srd">{T.dnd5eOption}</option>
             {customPackages.map((p) => (
               <option value={`custom:${p.id}`} key={p.id}>
-                {p.pkg.name} (yours)
+                {T.yourPackageOption(p.pkg.name)}
               </option>
             ))}
           </select>
-          <button type="submit">Create room</button>
+          <button type="submit">{T.createRoom}</button>
         </form>
       </section>
 
       <section class="dashboard-section">
-        <h2>Users</h2>
+        <h2>{T.usersHeading}</h2>
         <ul class="room-list">
           {userList.map((u) => (
             <li key={u.username}>
-              {u.username} {u.isAdmin ? "(admin)" : ""}
+              {u.username} {u.isAdmin ? T.adminSuffix : ""}
             </li>
           ))}
         </ul>
         <form onSubmit={createUser}>
           <input
-            placeholder="Username"
+            placeholder={T.usernamePlaceholder}
             value={newUsername}
             onInput={(e) => setNewUsername((e.target as HTMLInputElement).value)}
             required
           />
           <input
-            placeholder="Temp password"
+            placeholder={T.tempPasswordPlaceholder}
             value={newPassword}
             onInput={(e) => setNewPassword((e.target as HTMLInputElement).value)}
             required
@@ -165,9 +168,9 @@ export function AdminDashboard({ me, onLoggedOut }: { me: Me; onLoggedOut: () =>
               checked={newIsAdmin}
               onChange={(e) => setNewIsAdmin((e.target as HTMLInputElement).checked)}
             />
-            admin
+            {T.adminCheckboxLabel}
           </label>
-          <button type="submit">Create user</button>
+          <button type="submit">{T.createUser}</button>
         </form>
       </section>
     </div>

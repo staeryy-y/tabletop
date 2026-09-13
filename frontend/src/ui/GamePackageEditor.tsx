@@ -12,6 +12,9 @@ import {
 } from "../packages/gamePackage";
 import { readImageAsDataUrl } from "../packages/imageUpload";
 import { defaultCardSetPosition } from "../packages/startingLayout";
+import { UI_TEXT } from "../uiText";
+
+const T = UI_TEXT.gamePackageEditor;
 
 let nextId = 1;
 const freshId = (prefix: string) => `${prefix}-${nextId++}`;
@@ -48,7 +51,7 @@ export function GamePackageEditor({
   return (
     <div class="editor">
       <label>
-        Package name
+        {T.packageNameLabel}
         <input value={pkg.name} onInput={(e) => update({ name: (e.target as HTMLInputElement).value })} />
       </label>
 
@@ -69,9 +72,9 @@ export function GamePackageEditor({
       )}
 
       <div class="editor-actions">
-        <button onClick={onCancel}>Cancel</button>
+        <button onClick={onCancel}>{T.cancel}</button>
         <button disabled={errors.length > 0} onClick={() => onSave(pkg)}>
-          Save package
+          {T.savePackage}
         </button>
       </div>
     </div>
@@ -88,47 +91,51 @@ function Section({ title, children }: { title: string; children: preact.Componen
 }
 
 function TracksEditor({ tracks, dice, onChange }: { tracks: TrackDef[]; dice: DiceDef[]; onChange: (t: TrackDef[]) => void }) {
+  const t = T.tracks;
+
   function add() {
-    onChange([...tracks, { key: `track${tracks.length + 1}`, label: "New Track", values: [0, 1, 2, 3, 4, 5] }]);
+    onChange([...tracks, { key: `track${tracks.length + 1}`, label: t.newTrackDefaultLabel, values: [0, 1, 2, 3, 4, 5] }]);
   }
   function update(i: number, patch: Partial<TrackDef>) {
-    onChange(tracks.map((t, idx) => (idx === i ? { ...t, ...patch } : t)));
+    onChange(tracks.map((tr, idx) => (idx === i ? { ...tr, ...patch } : tr)));
   }
   function remove(i: number) {
     onChange(tracks.filter((_, idx) => idx !== i));
   }
 
   return (
-    <Section title="Tracks (character-sheet stats)">
-      {tracks.map((t, i) => (
+    <Section title={t.sectionTitle}>
+      {tracks.map((tr, i) => (
         <div class="editor-row" key={i}>
-          <input class="key-input" value={t.key} placeholder="key" onInput={(e) => update(i, { key: (e.target as HTMLInputElement).value })} />
-          <input value={t.label} placeholder="label" onInput={(e) => update(i, { label: (e.target as HTMLInputElement).value })} />
+          <input class="key-input" value={tr.key} placeholder={t.keyPlaceholder} onInput={(e) => update(i, { key: (e.target as HTMLInputElement).value })} />
+          <input value={tr.label} placeholder={t.labelPlaceholder} onInput={(e) => update(i, { label: (e.target as HTMLInputElement).value })} />
           <input
-            value={t.values.join(",")}
-            placeholder="values, e.g. 8,9,10,...,20"
+            value={tr.values.join(",")}
+            placeholder={t.valuesPlaceholder}
             onInput={(e) => update(i, { values: parseNumberList((e.target as HTMLInputElement).value) })}
           />
           <select
-            value={t.poolDie ?? ""}
+            value={tr.poolDie ?? ""}
             onChange={(e) => update(i, { poolDie: (e.target as HTMLSelectElement).value || undefined })}
           >
-            <option value="">no pool die</option>
+            <option value="">{t.noPoolDieOption}</option>
             {dice.map((d) => (
               <option value={d.key} key={d.key}>
-                pool: {d.key}
+                {t.poolDieOption(d.key)}
               </option>
             ))}
           </select>
-          <button onClick={() => remove(i)}>Remove</button>
+          <button onClick={() => remove(i)}>{t.remove}</button>
         </div>
       ))}
-      <button onClick={add}>+ Add track</button>
+      <button onClick={add}>{t.addTrack}</button>
     </Section>
   );
 }
 
 function DiceEditor({ dice, onChange }: { dice: DiceDef[]; onChange: (d: DiceDef[]) => void }) {
+  const t = T.dice;
+
   function add() {
     onChange([...dice, { key: `d${dice.length + 1}`, sides: 6 }]);
   }
@@ -140,14 +147,14 @@ function DiceEditor({ dice, onChange }: { dice: DiceDef[]; onChange: (d: DiceDef
   }
 
   return (
-    <Section title="Dice">
+    <Section title={t.sectionTitle}>
       {dice.map((d, i) => (
         <div class="editor-row" key={i}>
-          <input class="key-input" value={d.key} placeholder="key" onInput={(e) => update(i, { key: (e.target as HTMLInputElement).value })} />
+          <input class="key-input" value={d.key} placeholder={t.keyPlaceholder} onInput={(e) => update(i, { key: (e.target as HTMLInputElement).value })} />
           <input
             type="number"
             value={d.sides ?? ""}
-            placeholder="sides, e.g. 20"
+            placeholder={t.sidesPlaceholder}
             onInput={(e) => {
               const v = (e.target as HTMLInputElement).value;
               update(i, { sides: v ? Number(v) : undefined, faces: v ? undefined : d.faces });
@@ -155,22 +162,24 @@ function DiceEditor({ dice, onChange }: { dice: DiceDef[]; onChange: (d: DiceDef
           />
           <input
             value={d.faces?.join(",") ?? ""}
-            placeholder="or custom faces, e.g. 0,0,0,1,1,2"
+            placeholder={t.facesPlaceholder}
             onInput={(e) => {
               const v = (e.target as HTMLInputElement).value;
               const faces = parseNumberList(v);
               update(i, { faces: faces.length ? faces : undefined, sides: faces.length ? undefined : d.sides });
             }}
           />
-          <button onClick={() => remove(i)}>Remove</button>
+          <button onClick={() => remove(i)}>{t.remove}</button>
         </div>
       ))}
-      <button onClick={add}>+ Add die</button>
+      <button onClick={add}>{t.addDie}</button>
     </Section>
   );
 }
 
 function CardSetsEditor({ cardSets, onChange }: { cardSets: CardSet[]; onChange: (c: CardSet[]) => void }) {
+  const t = T.cardSets;
+
   function addSet() {
     onChange([...cardSets, { key: `set${cardSets.length + 1}`, entries: [] }]);
   }
@@ -182,23 +191,23 @@ function CardSetsEditor({ cardSets, onChange }: { cardSets: CardSet[]; onChange:
   }
 
   return (
-    <Section title="Card sets — each spawns as one labeled, shufflable stack">
+    <Section title={t.sectionTitle}>
       <StartingLayoutPreview cardSets={cardSets} onMove={updateSet} />
       {cardSets.map((set, i) => (
         <div class="editor-subsection" key={i}>
           <div class="editor-row">
-            <input class="key-input" value={set.key} placeholder="set key" onInput={(e) => updateSet(i, { key: (e.target as HTMLInputElement).value })} />
+            <input class="key-input" value={set.key} placeholder={t.keyPlaceholder} onInput={(e) => updateSet(i, { key: (e.target as HTMLInputElement).value })} />
             <input
               value={set.label ?? ""}
-              placeholder="label shown on the table, e.g. Role Cards"
+              placeholder={t.labelPlaceholder}
               onInput={(e) => updateSet(i, { label: (e.target as HTMLInputElement).value || undefined })}
             />
-            <button onClick={() => removeSet(i)}>Remove set</button>
+            <button onClick={() => removeSet(i)}>{t.removeSet}</button>
           </div>
           <CardEntriesEditor entries={set.entries} onChange={(entries) => updateSet(i, { entries })} />
         </div>
       ))}
-      <button onClick={addSet}>+ Add card set</button>
+      <button onClick={addSet}>{t.addSet}</button>
     </Section>
   );
 }
@@ -237,7 +246,7 @@ function StartingLayoutPreview({ cardSets, onMove }: { cardSets: CardSet[]; onMo
 
   return (
     <div>
-      <p class="hint">Drag a stack below to set where it appears when the room starts.</p>
+      <p class="hint">{T.cardSets.layoutHint}</p>
       <div
         class="layout-preview"
         ref={containerRef}
@@ -269,10 +278,11 @@ function StartingLayoutPreview({ cardSets, onMove }: { cardSets: CardSet[]; onMo
 }
 
 function CardEntriesEditor({ entries, onChange }: { entries: CardEntry[]; onChange: (e: CardEntry[]) => void }) {
+  const t = T.cardEntries;
   const [busy, setBusy] = useState<string | null>(null);
 
   function add() {
-    onChange([...entries, { id: freshId("card"), front: { title: "New Card" } }]);
+    onChange([...entries, { id: freshId("card"), front: { title: t.newCardDefaultTitle } }]);
   }
   function update(i: number, patch: Partial<CardEntry["front"]>) {
     onChange(entries.map((e, idx) => (idx === i ? { ...e, front: { ...e.front, ...patch } } : e)));
@@ -286,7 +296,7 @@ function CardEntriesEditor({ entries, onChange }: { entries: CardEntry[]; onChan
     try {
       update(i, { image: await readImageAsDataUrl(file), title: entries[i].front.title });
     } catch (err) {
-      alert(err instanceof Error ? err.message : "failed to read image");
+      alert(err instanceof Error ? err.message : T.readImageFailedFallback);
     } finally {
       setBusy(null);
     }
@@ -298,37 +308,39 @@ function CardEntriesEditor({ entries, onChange }: { entries: CardEntry[]; onChan
         {entries.map((entry, i) => (
           <div class="entry-tile" key={entry.id}>
             {entry.front.image ? (
-              <img class="entry-tile-preview" src={entry.front.image} alt="" />
+              <img class="entry-tile-preview" src={entry.front.image} alt={t.imageAltText} />
             ) : (
               <div class="entry-tile-preview entry-tile-preview-empty" style={{ background: colorToCss(entry.front.color) }}>
-                {!entry.front.title && "text"}
+                {!entry.front.title && t.emptyPreviewPlaceholder}
               </div>
             )}
             <input
               value={entry.front.title}
-              placeholder="title (or blank for image-only)"
+              placeholder={t.titlePlaceholder}
               onInput={(e) => update(i, { title: (e.target as HTMLInputElement).value })}
             />
             <input
               value={entry.front.text ?? ""}
-              placeholder="body text (optional)"
+              placeholder={t.bodyTextPlaceholder}
               onInput={(e) => update(i, { text: (e.target as HTMLInputElement).value })}
             />
             <input type="file" accept="image/*" onChange={(e) => uploadImage(i, (e.target as HTMLInputElement).files?.[0])} />
-            {busy === entry.id && <span class="hint">reading…</span>}
+            {busy === entry.id && <span class="hint">{t.readingHint}</span>}
             <div class="entry-tile-actions">
-              {entry.front.image && <button onClick={() => update(i, { image: undefined })}>Clear img</button>}
-              <button onClick={() => remove(i)}>Remove</button>
+              {entry.front.image && <button onClick={() => update(i, { image: undefined })}>{t.clearImage}</button>}
+              <button onClick={() => remove(i)}>{t.remove}</button>
             </div>
           </div>
         ))}
       </div>
-      <button onClick={add}>+ Add card</button>
+      <button onClick={add}>{t.addCard}</button>
     </div>
   );
 }
 
 function PieceSetsEditor({ pieceSets, onChange }: { pieceSets: PieceSet[]; onChange: (p: PieceSet[]) => void }) {
+  const t = T.pieceSets;
+
   function addSet() {
     onChange([...pieceSets, { key: `pieces${pieceSets.length + 1}`, entries: [] }]);
   }
@@ -340,26 +352,27 @@ function PieceSetsEditor({ pieceSets, onChange }: { pieceSets: PieceSet[]; onCha
   }
 
   return (
-    <Section title="Piece sets (board tiles, standees, tokens)">
+    <Section title={t.sectionTitle}>
       {pieceSets.map((set, i) => (
         <div class="editor-subsection" key={i}>
           <div class="editor-row">
-            <input class="key-input" value={set.key} placeholder="set key" onInput={(e) => updateSet(i, { key: (e.target as HTMLInputElement).value })} />
-            <button onClick={() => removeSet(i)}>Remove set</button>
+            <input class="key-input" value={set.key} placeholder={t.keyPlaceholder} onInput={(e) => updateSet(i, { key: (e.target as HTMLInputElement).value })} />
+            <button onClick={() => removeSet(i)}>{t.removeSet}</button>
           </div>
           <PieceEntriesEditor entries={set.entries} onChange={(entries) => updateSet(i, { entries })} />
         </div>
       ))}
-      <button onClick={addSet}>+ Add piece set</button>
+      <button onClick={addSet}>{t.addSet}</button>
     </Section>
   );
 }
 
 function PieceEntriesEditor({ entries, onChange }: { entries: PieceEntry[]; onChange: (e: PieceEntry[]) => void }) {
+  const t = T.pieceEntries;
   const [busy, setBusy] = useState<string | null>(null);
 
   function add() {
-    onChange([...entries, { id: freshId("piece"), symbol: "⭐" }]);
+    onChange([...entries, { id: freshId("piece"), symbol: t.newPieceDefaultSymbol }]);
   }
   function update(i: number, patch: Partial<PieceEntry>) {
     onChange(entries.map((e, idx) => (idx === i ? { ...e, ...patch } : e)));
@@ -373,7 +386,7 @@ function PieceEntriesEditor({ entries, onChange }: { entries: PieceEntry[]; onCh
     try {
       update(i, { image: await readImageAsDataUrl(file), symbol: undefined });
     } catch (err) {
-      alert(err instanceof Error ? err.message : "failed to read image");
+      alert(err instanceof Error ? err.message : T.readImageFailedFallback);
     } finally {
       setBusy(null);
     }
@@ -391,35 +404,37 @@ function PieceEntriesEditor({ entries, onChange }: { entries: PieceEntry[]; onCh
             )}
             <input
               value={entry.symbol ?? ""}
-              placeholder="emoji/symbol, e.g. ⚔️"
+              placeholder={t.symbolPlaceholder}
               maxLength={4}
               onInput={(e) => update(i, { symbol: (e.target as HTMLInputElement).value || undefined, image: (e.target as HTMLInputElement).value ? undefined : entry.image })}
             />
             <input type="file" accept="image/*" onChange={(e) => uploadImage(i, (e.target as HTMLInputElement).files?.[0])} />
             <input
               value={entry.connectors?.join(",") ?? ""}
-              placeholder="connectors, e.g. north,south"
+              placeholder={t.connectorsPlaceholder}
               onInput={(e) => {
                 const v = (e.target as HTMLInputElement).value;
                 const connectors = v.split(",").map((s) => s.trim()).filter(Boolean);
                 update(i, { connectors: connectors.length ? connectors : undefined });
               }}
             />
-            {busy === entry.id && <span class="hint">reading…</span>}
+            {busy === entry.id && <span class="hint">{t.readingHint}</span>}
             <div class="entry-tile-actions">
-              <button onClick={() => remove(i)}>Remove</button>
+              <button onClick={() => remove(i)}>{t.remove}</button>
             </div>
           </div>
         ))}
       </div>
-      <button onClick={add}>+ Add piece</button>
+      <button onClick={add}>{t.addPiece}</button>
     </div>
   );
 }
 
 function MacrosEditor({ macros, onChange }: { macros: MacroDef[]; onChange: (m: MacroDef[]) => void }) {
+  const t = T.macros;
+
   function add() {
-    onChange([...macros, { label: "New Macro", roll: "1d20" }]);
+    onChange([...macros, { label: t.newMacroDefaultLabel, roll: t.newMacroDefaultRoll }]);
   }
   function update(i: number, patch: Partial<MacroDef>) {
     onChange(macros.map((m, idx) => (idx === i ? { ...m, ...patch } : m)));
@@ -429,15 +444,15 @@ function MacrosEditor({ macros, onChange }: { macros: MacroDef[]; onChange: (m: 
   }
 
   return (
-    <Section title="Macros (roll buttons)">
+    <Section title={t.sectionTitle}>
       {macros.map((m, i) => (
         <div class="editor-row" key={i}>
-          <input value={m.label} placeholder="label" onInput={(e) => update(i, { label: (e.target as HTMLInputElement).value })} />
-          <input value={m.roll} placeholder="roll, e.g. 1d20 + dex" onInput={(e) => update(i, { roll: (e.target as HTMLInputElement).value })} />
-          <button onClick={() => remove(i)}>Remove</button>
+          <input value={m.label} placeholder={t.labelPlaceholder} onInput={(e) => update(i, { label: (e.target as HTMLInputElement).value })} />
+          <input value={m.roll} placeholder={t.rollPlaceholder} onInput={(e) => update(i, { roll: (e.target as HTMLInputElement).value })} />
+          <button onClick={() => remove(i)}>{t.remove}</button>
         </div>
       ))}
-      <button onClick={add}>+ Add macro</button>
+      <button onClick={add}>{t.addMacro}</button>
     </Section>
   );
 }

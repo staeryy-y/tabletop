@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { GamePackage, createEmptyPackage } from "../packages/gamePackage";
 import { PackageStore, StoredPackage, newPackageId } from "../packages/packageStore";
+import { UI_TEXT } from "../uiText";
 import { GamePackageEditor } from "./GamePackageEditor";
+
+const T = UI_TEXT.gamePackages;
 
 // The game-package manager: create/edit/import/export/delete packages, entirely
 // client-side (IndexedDB — see packages/packageStore.ts) since the server never stores
@@ -32,7 +35,7 @@ export function GamePackages() {
   }
 
   async function remove(id: string) {
-    if (!confirm("Delete this package? This cannot be undone.")) return;
+    if (!confirm(T.deletePackageConfirm)) return;
     await store.delete(id);
     await refresh();
   }
@@ -53,12 +56,12 @@ export function GamePackages() {
     try {
       const pkg = JSON.parse(await file.text()) as GamePackage;
       if (!pkg || typeof pkg !== "object" || !Array.isArray(pkg.cardSets)) {
-        throw new Error("that doesn't look like a game package file");
+        throw new Error(T.notAPackageFile);
       }
       await store.save(newPackageId(), pkg);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "failed to import package");
+      setError(err instanceof Error ? err.message : T.importFailedFallback);
     } finally {
       if (fileInput.current) fileInput.current.value = "";
     }
@@ -67,43 +70,36 @@ export function GamePackages() {
   return (
     <div class="dashboard">
       <header>
-        <h1>Game packages</h1>
+        <h1>{T.title}</h1>
         <nav>
-          <a href="#/">&larr; Dashboard</a>
+          <a href="#/">{T.dashboardNavLink}</a>
         </nav>
       </header>
 
       {editing ? (
         <section class="dashboard-section">
-          <h2>{editing.id ? `Edit "${editing.pkg.name}"` : "New game package"}</h2>
+          <h2>{editing.id ? T.editingHeading(editing.pkg.name) : T.newPackageHeading}</h2>
           <GamePackageEditor initial={editing.pkg} onSave={save} onCancel={() => setEditing(null)} />
         </section>
       ) : (
         <section class="dashboard-section">
-          <p class="hint">
-            Rules content — tracks, dice, cards, pieces, macros — for rooms to use. Cards can have images or
-            just text; pieces can have images or an emoji/symbol. Lives in this browser only (see
-            docs/DECISIONS.md D14) — export a package to share or back it up.
-          </p>
+          <p class="hint">{T.subtitle}</p>
           {error && <p class="error">{error}</p>}
           <ul class="room-list">
             {packages.map((record) => (
               <li key={record.id}>
                 <strong>{record.pkg.name}</strong>
-                <span class="hint">
-                  {" "}
-                  &middot; {record.pkg.cardSets.length} card set(s), {record.pkg.pieceSets.length} piece set(s) &middot;{" "}
-                </span>
-                <button onClick={() => setEditing(record)}>Edit</button>{" "}
-                <button onClick={() => exportPackage(record)}>Export</button>{" "}
-                <button onClick={() => remove(record.id)}>Delete</button>
+                <span class="hint"> &middot; {T.setCounts(record.pkg.cardSets.length, record.pkg.pieceSets.length)} &middot; </span>
+                <button onClick={() => setEditing(record)}>{T.edit}</button>{" "}
+                <button onClick={() => exportPackage(record)}>{T.export}</button>{" "}
+                <button onClick={() => remove(record.id)}>{T.delete}</button>
               </li>
             ))}
-            {packages.length === 0 && <li class="hint">No custom packages yet — create one, or import a file.</li>}
+            {packages.length === 0 && <li class="hint">{T.noPackagesHint}</li>}
           </ul>
           <div class="editor-actions">
-            <button onClick={() => setEditing({ id: null, pkg: createEmptyPackage("New Package") })}>
-              + New package
+            <button onClick={() => setEditing({ id: null, pkg: createEmptyPackage(T.newPackageDefaultName) })}>
+              {T.newPackageButton}
             </button>
             <input ref={fileInput} type="file" accept="application/json" onChange={(e) => importFile((e.target as HTMLInputElement).files?.[0])} />
           </div>

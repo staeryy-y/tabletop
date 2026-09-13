@@ -1,5 +1,8 @@
 import { useState } from "preact/hooks";
 import { ApiError, Me, auth } from "../net/api";
+import { UI_TEXT } from "../uiText";
+
+const T = UI_TEXT.login;
 
 export function Login({ onLoggedIn }: { onLoggedIn: (me: Me) => void }) {
   const [username, setUsername] = useState("admin");
@@ -15,7 +18,7 @@ export function Login({ onLoggedIn }: { onLoggedIn: (me: Me) => void }) {
       const me = await auth.login(username, password);
       onLoggedIn(me);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "login failed");
+      setError(err instanceof ApiError ? err.message : T.loginFailedFallback);
     } finally {
       setBusy(false);
     }
@@ -24,14 +27,14 @@ export function Login({ onLoggedIn }: { onLoggedIn: (me: Me) => void }) {
   return (
     <div class="centered-page">
       <form class="panel" onSubmit={submit}>
-        <h1>rpg-tabletop</h1>
-        <p class="hint">Admin login. No public signup — accounts are invite-only.</p>
+        <h1>{T.title}</h1>
+        <p class="hint">{T.subtitle}</p>
         <label>
-          Username
+          {T.usernameLabel}
           <input value={username} onInput={(e) => setUsername((e.target as HTMLInputElement).value)} autofocus />
         </label>
         <label>
-          Password
+          {T.passwordLabel}
           <input
             type="password"
             value={password}
@@ -40,11 +43,12 @@ export function Login({ onLoggedIn }: { onLoggedIn: (me: Me) => void }) {
         </label>
         {error && <p class="error">{error}</p>}
         <button type="submit" disabled={busy}>
-          {busy ? "Logging in…" : "Log in"}
+          {busy ? T.submitBusy : T.submit}
         </button>
-        <p class="hint">First run? Log in with admin / admin — you'll be asked to change it.</p>
+        <p class="hint">{T.firstRunHint}</p>
         <p class="hint">
-          Just want to play? <a href="#/new">Start a game without an account</a>
+          {T.noAccountPrompt}
+          <a href="#/new">{T.noAccountLink}</a>
         </p>
       </form>
     </div>

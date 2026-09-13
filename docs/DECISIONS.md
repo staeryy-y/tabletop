@@ -405,3 +405,28 @@ Consequences of the split, kept deliberately narrow for this first cut:
   way an unpositioned card set falls back to an auto-spread default — but unlike
   CardSet, the editor doesn't yet expose a drag-to-position control for that anchor
   (that's the still-open "Layout tab" request, not solved by this decision).
+
+## D22 — All UI copy lives in one file (`frontend/src/uiText.ts`), not inline in JSX
+
+Requested explicitly: every piece of UI text/label should be a reference to a constant
+in a JS file, not a literal string in component code — the stated reason being that
+AI-written copy is easy to spot and grating, so the user wants to rewrite all of it
+themselves without having to hunt through component logic to find each string.
+
+`frontend/src/uiText.ts` exports one `UI_TEXT` object, nested by component (matching
+the file/function it's used from — `UI_TEXT.login`, `UI_TEXT.gamePackageEditor.tracks`,
+etc.) rather than grouped by "kind of string" (all headings together, all buttons
+together): the point is to make "what text does this one component show" fast to find
+and replace, not to produce a general glossary. A plain string covers the common case;
+a small function (`deleteRoomConfirm(name)`, `flipAll(count)`) covers the few that need
+to interpolate a value — the file has no other logic, deliberately, so nothing but
+wording ever needs to change there. `engine/table.ts`'s plain-DOM right-click menus
+pull from the same file (`UI_TEXT.tableMenu`) as the JSX components do, since a
+right-click menu label is exactly as much "UI text" as a button's — one file covers
+both, not one per rendering technology.
+
+Not extracted: CSS class names, HTML attribute values that aren't prose (`type="file"`,
+`href="#/new"`), decorative punctuation/separators (" &middot; ", the space before a
+suffix), and console-only error logging (`console.error` calls no one but a developer
+ever sees) — none of that reads as "written" text a person would want to rewrite for
+voice, so extracting it would just add noise without serving the actual goal.

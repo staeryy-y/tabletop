@@ -1,5 +1,8 @@
 import { useState } from "preact/hooks";
 import { ApiError, Me, auth } from "../net/api";
+import { UI_TEXT } from "../uiText";
+
+const T = UI_TEXT.accountSetup;
 
 /** The forced first-login flow for any account with mustChangePassword set — the
  * bootstrap admin/admin account, or one an admin just created. Both the username and
@@ -17,7 +20,7 @@ export function AccountSetup({ me, onDone }: { me: Me; onDone: (me: Me) => void 
   async function submit(e: Event) {
     e.preventDefault();
     if (next !== confirm) {
-      setError("passwords don't match");
+      setError(T.passwordMismatch);
       return;
     }
     setBusy(true);
@@ -26,7 +29,7 @@ export function AccountSetup({ me, onDone }: { me: Me; onDone: (me: Me) => void 
       const updated = await auth.completeSetup(current, username, next);
       onDone(updated);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "failed to complete setup");
+      setError(err instanceof ApiError ? err.message : T.setupFailedFallback);
     } finally {
       setBusy(false);
     }
@@ -35,13 +38,10 @@ export function AccountSetup({ me, onDone }: { me: Me; onDone: (me: Me) => void 
   return (
     <div class="centered-page">
       <form class="panel" onSubmit={submit}>
-        <h1>Finish setting up your account</h1>
-        <p class="hint">
-          "{me.username}" is a placeholder, not a real account yet — pick a real username and password to
-          continue.
-        </p>
+        <h1>{T.title}</h1>
+        <p class="hint">{T.placeholderNotice(me.username)}</p>
         <label>
-          New username
+          {T.newUsernameLabel}
           <input
             value={username}
             onInput={(e) => setUsername((e.target as HTMLInputElement).value)}
@@ -50,20 +50,20 @@ export function AccountSetup({ me, onDone }: { me: Me; onDone: (me: Me) => void 
           />
         </label>
         <label>
-          Current password
+          {T.currentPasswordLabel}
           <input type="password" value={current} onInput={(e) => setCurrent((e.target as HTMLInputElement).value)} />
         </label>
         <label>
-          New password
+          {T.newPasswordLabel}
           <input type="password" value={next} onInput={(e) => setNext((e.target as HTMLInputElement).value)} />
         </label>
         <label>
-          Confirm new password
+          {T.confirmPasswordLabel}
           <input type="password" value={confirm} onInput={(e) => setConfirm((e.target as HTMLInputElement).value)} />
         </label>
         {error && <p class="error">{error}</p>}
         <button type="submit" disabled={busy}>
-          {busy ? "Saving…" : "Finish setup"}
+          {busy ? T.submitBusy : T.submit}
         </button>
       </form>
     </div>

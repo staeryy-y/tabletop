@@ -1,6 +1,9 @@
 import { useEffect, useState } from "preact/hooks";
 import { ApiError, RoomPublicInfo, rooms } from "../net/api";
 import { storeRoomToken } from "../roomToken";
+import { UI_TEXT } from "../uiText";
+
+const T = UI_TEXT.roomJoin;
 
 export function RoomJoin({ slug }: { slug: string }) {
   const [info, setInfo] = useState<RoomPublicInfo | null>(null);
@@ -42,10 +45,10 @@ export function RoomJoin({ slug }: { slug: string }) {
   return (
     <div class="centered-page">
       <form class="panel" onSubmit={submit}>
-        <h1>{info ? info.name : "Loading…"}</h1>
-        <p class="hint">No account needed — just a display name{info?.hasPassword ? " and this room's password" : ""}.</p>
+        <h1>{info ? info.name : T.loading}</h1>
+        <p class="hint">{T.subtitle(Boolean(info?.hasPassword))}</p>
         <label>
-          Display name
+          {T.displayNameLabel}
           <input
             value={displayName}
             onInput={(e) => setDisplayName((e.target as HTMLInputElement).value)}
@@ -56,13 +59,13 @@ export function RoomJoin({ slug }: { slug: string }) {
         </label>
         {info?.hasPassword && (
           <label>
-            Room password
+            {T.roomPasswordLabel}
             <input type="password" value={password} onInput={(e) => setPassword((e.target as HTMLInputElement).value)} />
           </label>
         )}
         {error && <p class="error">{error}</p>}
         <button type="submit" disabled={busy || !info}>
-          {busy ? "Joining…" : "Join"}
+          {busy ? T.submitBusy : T.submit}
         </button>
       </form>
     </div>

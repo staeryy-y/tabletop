@@ -145,6 +145,12 @@ that touched this log.
   drag-to-position editor control for a piece set's anchor (card sets already have one;
   see the "Layout tab" gap below).
 
+- All UI copy centralized into `frontend/src/uiText.ts` (D22) — every JSX/DOM string
+  across `ui/*.tsx` and `engine/table.ts`'s right-click menus is now a reference into
+  one `UI_TEXT` object, nested by component, rather than a literal inline in component
+  code. Purely a refactor (no wording changed): the point is to make every piece of
+  copy reachable and rewritable from one file.
+
 ## Known gaps / open feedback
 
 Newest first. Fixed items move to "Implemented" above with a note here of what changed.

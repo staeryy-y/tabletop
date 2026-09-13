@@ -2,6 +2,9 @@ import { useEffect, useState } from "preact/hooks";
 import { ApiError, rooms } from "../net/api";
 import { StoredPackage, PackageStore } from "../packages/packageStore";
 import { rememberRoomPackageId } from "../roomPackageChoice";
+import { UI_TEXT } from "../uiText";
+
+const T = UI_TEXT.newAnonymousRoom;
 
 // No account needed at all (docs/DECISIONS.md D19) — the room this creates never
 // touches the server's database; see app/rooms.py's own docstring for what "anonymous"
@@ -40,34 +43,35 @@ export function NewAnonymousRoom() {
   return (
     <div class="centered-page">
       <form class="panel" onSubmit={createRoom}>
-        <h1>Start a game</h1>
-        <p class="hint">No account needed — this room isn't saved anywhere on the server.</p>
+        <h1>{T.title}</h1>
+        <p class="hint">{T.subtitle}</p>
         <label>
-          Room name
+          {T.roomNameLabel}
           <input value={name} onInput={(e) => setName((e.target as HTMLInputElement).value)} required autofocus />
         </label>
         <label>
-          Password (optional)
+          {T.passwordLabel}
           <input value={password} onInput={(e) => setPassword((e.target as HTMLInputElement).value)} />
         </label>
         <label>
-          Game
+          {T.gameLabel}
           <select value={gameDefRef} onChange={(e) => setGameDefRef((e.target as HTMLSelectElement).value)}>
-            <option value="bundled:generic-freeform">Generic Freeform</option>
-            <option value="bundled:dnd5e-srd">D&amp;D 5e (SRD)</option>
+            <option value="bundled:generic-freeform">{T.genericFreeformOption}</option>
+            <option value="bundled:dnd5e-srd">{T.dnd5eOption}</option>
             {customPackages.map((p) => (
               <option value={`custom:${p.id}`} key={p.id}>
-                {p.pkg.name} (this browser)
+                {T.localPackageOption(p.pkg.name)}
               </option>
             ))}
           </select>
         </label>
         {error && <p class="error">{error}</p>}
         <button type="submit" disabled={busy}>
-          {busy ? "Creating…" : "Create room"}
+          {busy ? T.submitBusy : T.submit}
         </button>
         <p class="hint">
-          Have an account? <a href="#/">Log in instead</a>
+          {T.haveAccountPrompt}
+          <a href="#/">{T.haveAccountLink}</a>
         </p>
       </form>
     </div>
