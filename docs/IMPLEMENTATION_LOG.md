@@ -61,8 +61,14 @@ that touched this log.
   viewport, with a floating player-list window pinned top-left, a floating pill-shaped
   action bar pinned bottom-center (spawn, eyes-closed toggle, color swatches, chat
   toggle, back-to-dashboard), and the chat dropdown floating just above the toolbar.
-  Not the full pixel-art pass (still a separate open item below) — this is layout/
-  chrome, not a visual-asset overhaul.
+- Pixel-art visual theme (D12/ARCHITECTURE.md "Visual style"), partially — see the
+  matching "known gaps" entry below for what's still missing. PixiJS textures default to
+  nearest-neighbor scaling (`TextureStyle.defaultOptions.scaleMode = "nearest"`, set once
+  in `engine/table.ts`) so card art (see below) scales crisply instead of blurring; the
+  UI chrome — headings, buttons, the HUD toolbar/panels — uses a bitmap font ("Press
+  Start 2P") and blockier low-radius shapes instead of smooth webapp rounding. Dense text
+  (chat log, form inputs, the package editor) deliberately stays on the existing
+  monospace stack — legibility over strict theme purity there.
 - Table state now actually survives a host reloading or briefly closing their tab —
   `app/signaling.py`'s in-memory recovery snapshot used to be wiped the instant a room's
   peer count hit zero (see `_handle_disconnect`), so reopening a room you'd just been
@@ -95,9 +101,14 @@ Newest first. Fixed items move to "Implemented" above with a note here of what c
   on to a different card (a flip, a merge) via a per-container render-token check.
   `RoomTable.tsx`'s `cardDefsFromPackage` was also silently dropping `entry.front.image`/
   `set.back?.image` entirely before this — now threads them through.
-- **(Not started) Pixel-art visual theme.** Explicit early request ("don't forget the
-  pixel art theme" x2), still purely aspirational — see D12 in DECISIONS.md for the
-  design decision, no implementation.
+- **(Fixed, partially)** Pixel-art visual theme — see "Implemented" above for what
+  shipped. **Still not done**, i.e. D12/ARCHITECTURE.md "Visual style" isn't fully
+  satisfied yet: the "generic fallback visuals ship as low-resolution bundled sprites"
+  half (a distinct pixel-art card-back/token sprite, "authored... scaled up crisply") —
+  the demo deck's back and player tokens are still plain procedurally-drawn
+  shapes/colors, not actual sprite assets, since nothing in this environment can author
+  real pixel-art images; and the integer-zoom-snapping refinement ARCHITECTURE.md itself
+  calls "a nice-to-have, not required."
 - **(Not started, newly noticed while fixing card images) Pieces are never spawned or
   rendered on the table at all.** `PieceSet`/`PieceEntry` exist in the package data model
   and editor (`GamePackageEditor.tsx`), but nothing in `table.ts`/`RoomTable.tsx` ever

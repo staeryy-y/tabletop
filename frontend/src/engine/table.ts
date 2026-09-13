@@ -7,13 +7,23 @@
 // This is the M3 milestone (docs/PLAN.md): the sandbox works entirely locally in this
 // tab for now. Syncing it P2P over WebRTC (and the WS-relay fallback) is M6 and isn't
 // wired up here yet — see net/signaling.ts.
-import { Application, Container, FederatedPointerEvent, Graphics, Text } from "pixi.js";
+import { Application, Container, FederatedPointerEvent, Graphics, Text, TextureStyle } from "pixi.js";
 import { CameraInput, NO_CAMERA_INPUT, stepCamera } from "./camera";
 import { CARD_HEIGHT, CARD_WIDTH, CardDef, renderCard } from "./card";
 import { TableSyncClient, TableView } from "../net/roomConnection";
 import { TableEvent } from "../net/syncProtocol";
 import { PileState, TableModel } from "./pileModel";
 import { computeSeatPositions } from "./seating";
+
+// Pixel-art visual theme (docs/ARCHITECTURE.md "Visual style", D12): every texture
+// PixiJS creates from here on (card art loaded by engine/card.ts included) scales with
+// nearest-neighbor sampling instead of the default bilinear blur — crisp upscaling for
+// small/pixel-art-native images. A module-level side effect rather than something set
+// per-Application, since it's a library-wide default this app always wants; harmless if
+// this module is imported more than once (setting it again is a no-op in effect). A
+// user-uploaded photo/painted-illustration card still displays fine either way — this
+// is a rendering default, not a requirement on content.
+TextureStyle.defaultOptions.scaleMode = "nearest";
 
 const MERGE_RADIUS = CARD_WIDTH * 0.6;
 const ROTATE_HANDLE_OFFSET = CARD_HEIGHT / 2 + 16;

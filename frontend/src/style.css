@@ -1,5 +1,11 @@
-/* Placeholder styling — functional, not the pixel-art visual pass from
-   docs/ARCHITECTURE.md "Visual style" (that's follow-up polish, not core mechanics). */
+/* The pixel-art visual pass from docs/ARCHITECTURE.md "Visual style" (D12): a bitmap
+   font for UI chrome, crisp (non-blurry) scaling for any raster art, blockier low-radius
+   shapes instead of smooth webapp rounding. The bitmap font (--font-pixel) is used for
+   headings, buttons, and other short chrome labels — deliberately *not* for dense body
+   text (chat log, form inputs, the game-package editor), where a true bitmap font hurts
+   legibility at normal reading sizes; those stay on the monospace stack, which still
+   reads as "retro" without becoming hard to read. Nearest-neighbor texture scaling for
+   the PixiJS canvas itself (card art, once card images render) is set in engine/table.ts. */
 :root {
   color-scheme: dark;
   --bg: #1c1b22;
@@ -7,7 +13,10 @@
   --border: #46424f;
   --text: #eae6f0;
   --accent: #8f7dff;
-  font-family: system-ui, sans-serif;
+  --font-pixel: "Press Start 2P", "Courier New", monospace;
+  --font-mono: "Courier New", monospace;
+  --radius: 3px;
+  font-family: var(--font-mono);
 }
 
 * {
@@ -24,6 +33,13 @@ body {
   min-height: 100vh;
 }
 
+h1,
+h2,
+h3 {
+  font-family: var(--font-pixel);
+  line-height: 1.5;
+}
+
 .centered-page {
   min-height: 100vh;
   display: flex;
@@ -34,8 +50,8 @@ body {
 
 .panel {
   background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
   padding: 24px;
   width: min(360px, 100%);
   display: flex;
@@ -45,7 +61,7 @@ body {
 
 .panel h1 {
   margin: 0 0 4px;
-  font-size: 1.3rem;
+  font-size: 0.95rem;
 }
 
 .panel label {
@@ -57,20 +73,22 @@ body {
 
 input {
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 2px solid var(--border);
   color: var(--text);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 8px 10px;
   font-size: 0.95rem;
+  font-family: var(--font-mono);
 }
 
 button {
   background: var(--accent);
-  border: none;
+  border: 2px solid #1a1a1a;
   color: #111;
-  font-weight: 600;
-  border-radius: 6px;
-  padding: 9px 14px;
+  font-family: var(--font-pixel);
+  font-size: 0.7rem;
+  border-radius: var(--radius);
+  padding: 10px 14px;
   cursor: pointer;
 }
 
@@ -165,15 +183,15 @@ button:disabled {
   padding: 10px 14px;
   background: rgba(27, 26, 33, 0.88);
   border: 2px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   backdrop-filter: blur(3px);
-  font-family: monospace;
+  font-family: var(--font-mono);
 }
 
 .hud-players h2 {
-  margin: 0 0 2px;
-  font-size: 1rem;
+  margin: 0 0 4px;
+  font-size: 0.75rem;
 }
 
 .hud-pkg-name {
@@ -215,7 +233,7 @@ button:disabled {
   padding: 8px 12px;
   background: rgba(27, 26, 33, 0.9);
   border: 2px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   backdrop-filter: blur(3px);
   max-width: calc(100vw - 24px);
@@ -225,9 +243,9 @@ button:disabled {
 
 .hud-toolbar button,
 .hud-icon-button {
-  font-size: 0.85rem;
-  padding: 8px 12px;
-  border-radius: 999px;
+  font-size: 0.6rem;
+  padding: 10px 12px;
+  border-radius: var(--radius);
 }
 
 a.hud-icon-button {
@@ -367,8 +385,11 @@ button.hud-icon-button.active {
   width: 32px;
   height: 32px;
   object-fit: cover;
-  border-radius: 4px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
+  /* Crisp, non-blurry upscaling for pixel-art-sized uploads — see D12; a smooth-scaled
+     photo/illustration still displays fine, it just won't get this extra crispness. */
+  image-rendering: pixelated;
 }
 
 .entry-thumb-empty,
@@ -476,21 +497,24 @@ button.hud-icon-button.active {
   position: fixed;
   z-index: 10000;
   background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
   padding: 4px;
   display: flex;
   flex-direction: column;
-  min-width: 140px;
+  min-width: 150px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
 }
 
 .card-menu button {
   background: transparent;
   color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
   font-weight: 400;
   text-align: left;
-  border-radius: 4px;
+  border: none;
+  border-radius: var(--radius);
   padding: 6px 10px;
 }
 
