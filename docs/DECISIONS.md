@@ -153,25 +153,33 @@ still renders correctly, it just doesn't get the crisp up-scaling treatment nati
 pixel-art assets do. Keeping this a presentation detail, not a schema rule, avoids
 coupling the generic engine to one game's/one project's specific aesthetic.
 
-## D13 — GM is a role bound to the room-creating account, decoupled from "host"
+## D13 — The GM is always host when connected; a non-GM peer may hold the role only until they join
 
-The room's creator is always its GM, independent of which peer happens to be the
-technical host holding canonical state (D3's star topology) — these solve different
-problems. Host is a networking concern (whoever's state everyone else's client trusts
-and syncs deltas from) and can migrate on disconnect. GM is a permissions concern (who
-may spawn/despawn objects or peek at anything hidden) and is
-simply re-attested by the server on every connection, based on `rooms.owner_user_id` — it
-never needs migration logic of its own, and it survives the GM's own reconnects without
-depending on connection order the way host election does. Tying it to the account system
-means it's the one place server-known identity is allowed to affect an otherwise fully
-P2P session — everything about manipulating what's *already* on the table stays purely
-peer-trust-based (see NETWORKING.md "Trust model"); only bringing new things into
-existence, removing them, or seeing something hidden needs the server's word for who's
-allowed. Host election prefers a connected GM as the promotion candidate when the current
-host
-drops, since it's a natural continuation of "the GM already runs the table" (see D3), but
-that's a nicety — GM-gated actions are checked against the server-attested `gmPeerId` by
-whoever the current host is, regardless of whether the GM is that host.
+The room's creator is always its GM — attested by the server, based on
+`rooms.owner_user_id`, not asserted by a peer (see "GM attestation" below) — and,
+whenever connected, is also always the technical **host**: the "master copy" of the
+table lives in the room creator's browser. Even though the session is otherwise P2P,
+it isn't a session of equals; one participant is privileged by construction. A non-GM
+peer can still become a *temporary* host (see D3's star topology) if they open the room
+before the GM ever does, so the table isn't unusable while waiting — but the instant the
+GM connects, whether that's the very first join or long after someone else has been
+hosting for a while, hosting transfers to them immediately (`RoomState.elect_host_on_join`
+in app/signaling.py), the same `host-changed` message a disconnect-triggered migration
+sends. If the GM later disconnects, `pick_next_host` picks a temporary replacement
+(preferring a *different* connected GM if one somehow exists, otherwise the
+oldest-joined peer) exactly as before — and the moment the real GM reconnects, the same
+join-time promotion takes hosting straight back.
+
+Tying host election to the account system this way — rather than "whoever's state
+everyone else's client trusts" being a free-floating role decided purely by connection
+order — means it's the one place server-known identity is allowed to affect an otherwise
+fully P2P session. Everything about manipulating what's *already* on the table stays
+purely peer-trust-based (see NETWORKING.md "Trust model"); only bringing new things into
+existence, removing them, seeing something hidden, or being the authority everyone else
+syncs from needs the server's word for who's allowed. GM-gated actions are still checked
+against the server-attested `gmPeerId` by whoever the current host is — which, per this
+decision, is normally the GM anyway, but the check stays in place for the brief windows
+(before the GM joins, or between their disconnect and reconnect) where it isn't.
 
 ## D14 — Game packages (rules + assets) are P2P-distributed files; the server stores none
 of it

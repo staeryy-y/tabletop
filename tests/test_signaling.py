@@ -62,6 +62,47 @@ def test_pick_next_host_picks_oldest_gm_if_multiple_gms_somehow_present():
     assert state.pick_next_host(exclude="") == "b"
 
 
+# --- RoomState.elect_host_on_join (D13: the GM is always host when connected) ---
+
+
+def test_elect_host_on_join_first_ever_joiner_becomes_host_even_if_not_gm():
+    state = RoomState()
+    promoted, needs_broadcast = state.elect_host_on_join("a", is_gm=False)
+    assert (promoted, needs_broadcast) == (True, False)  # no one else to notify
+    assert state.host_peer_id == "a"
+
+
+def test_elect_host_on_join_non_gm_joining_an_already_hosted_room_does_not_become_host():
+    state = RoomState()
+    state.host_peer_id = "host"
+    promoted, needs_broadcast = state.elect_host_on_join("guest", is_gm=False)
+    assert (promoted, needs_broadcast) == (False, False)
+    assert state.host_peer_id == "host"
+
+
+def test_elect_host_on_join_gm_takes_over_from_a_different_existing_host():
+    state = RoomState()
+    state.host_peer_id = "temp-host"
+    promoted, needs_broadcast = state.elect_host_on_join("gm", is_gm=True)
+    assert (promoted, needs_broadcast) == (True, True)  # temp-host needs a host-changed
+    assert state.host_peer_id == "gm"
+
+
+def test_elect_host_on_join_gm_joining_an_empty_room_is_the_plain_first_join_case():
+    state = RoomState()
+    promoted, needs_broadcast = state.elect_host_on_join("gm", is_gm=True)
+    assert (promoted, needs_broadcast) == (True, False)  # nobody was hosting to displace
+    assert state.host_peer_id == "gm"
+
+
+def test_elect_host_on_join_gm_is_already_host_rejoining_changes_nothing():
+    state = RoomState()
+    state.host_peer_id = "gm"
+    promoted, needs_broadcast = state.elect_host_on_join("gm", is_gm=True)
+    assert (promoted, needs_broadcast) == (False, False)
+    assert state.host_peer_id == "gm"
+
+
 # --- _handle_message ---
 
 
@@ -365,6 +406,47 @@ def test_ws_peer_joined_is_broadcast_to_existing_peers_only(admin_client, second
             assert joined_evt["peerId"] == welcome2["peerId"]
             assert joined_evt["name"] == "Bob"
             assert joined_evt["isGM"] is False
+
+
+def test_ws_gm_joining_after_a_temporary_host_takes_over_immediately(admin_client, second_client):
+    # D13: the room's creator (GM) is always host when connected. Bob (no session,
+    # so not the GM) opens the link first and becomes a temporary host; once Alice
+    # (the actual room owner) joins, hosting must move to her immediately.
+    slug = admin_client.post("/api/rooms", json={"name": "R"}).json()["slug"]
+    join_bob = _join(second_client, slug, "Bob")
+    join_alice = _join(admin_client, slug, "Alice")
+
+    with second_client.websocket_connect(f"/ws/room/{slug}?token={join_bob['token']}") as ws_bob:
+        welcome_bob = ws_bob.receive_json()
+        assert welcome_bob["hostPeerId"] == welcome_bob["peerId"], "Bob is host until the GM shows up"
+        assert ws_bob.receive_json() == {"type": "you-are-host", "snapshot": None}
+
+        with admin_client.websocket_connect(f"/ws/room/{slug}?token={join_alice['token']}") as ws_alice:
+            welcome_alice = ws_alice.receive_json()
+            assert welcome_alice["hostPeerId"] == welcome_alice["peerId"], "the GM takes over even though she joined second"
+            assert welcome_alice["gmPeerId"] == welcome_alice["peerId"]
+            assert ws_alice.receive_json() == {"type": "you-are-host", "snapshot": None}
+
+            # Bob hears about Alice's presence and, separately, that hosting moved to
+            # her — order between the two isn't asserted, just that both arrived and
+            # neither claims Bob is still host.
+            events = [ws_bob.receive_json(), ws_bob.receive_json()]
+            assert {e["type"] for e in events} == {"peer-joined", "host-changed"}
+            host_changed = next(e for e in events if e["type"] == "host-changed")
+            assert host_changed["hostPeerId"] == welcome_alice["peerId"]
+
+
+def test_ws_gm_joining_an_empty_room_first_still_just_becomes_host_normally(admin_client):
+    # The plain case (GM opens their own room first) shouldn't get an extra, spurious
+    # host-changed broadcast — there was no one else hosting to displace.
+    slug = admin_client.post("/api/rooms", json={"name": "R"}).json()["slug"]
+    join = _join(admin_client, slug, "Alice")
+
+    with admin_client.websocket_connect(f"/ws/room/{slug}?token={join['token']}") as ws:
+        welcome = ws.receive_json()
+        assert welcome["hostPeerId"] == welcome["peerId"]
+        assert ws.receive_json() == {"type": "you-are-host", "snapshot": None}
+        # nothing else should arrive unprompted
 
 
 def test_ws_welcome_lists_every_already_connected_peer_so_a_joiner_sees_them_immediately(admin_client, second_client):

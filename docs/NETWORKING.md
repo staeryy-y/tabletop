@@ -73,6 +73,7 @@ peer id — it never inspects `sdp`/`candidate`/`snapshot` payloads.
 → ice / ← ice        { to, from, candidate }
 → promote-ack       { }                              new host confirms it has taken over
 ← you-are-host      { snapshot|null }                server tells a peer it's now host
+← host-changed      { hostPeerId }                   broadcast to survivors, excluding the new host
 → snapshot          { blob }                         host → server, periodic + on major change
 → relay / ← relay    { to, payload }                 opaque game-sync fallback (see below)
 ```
@@ -80,12 +81,38 @@ peer id — it never inspects `sdp`/`candidate`/`snapshot` payloads.
 Flow for a new joiner:
 
 1. Client opens the WS, sends `hello`.
-2. Server replies `welcome` with the current host's peer id (or `null` if the room is
-   empty — this client becomes host) and the room's game definition, if any.
-3. If there's a host: joiner creates an `RTCPeerConnection`, sends `offer` addressed to
-   the host; server relays it; host replies `answer`; both sides trickle `ice`.
+2. Server replies `welcome` with the current host's peer id (`null` only if the room is
+   empty — this client becomes host) and the room's game definition, if any. If this
+   joiner is the room's GM and someone else was already host, `hostPeerId` in this same
+   `welcome` is already the joiner's own id — see "Host election" below — and every
+   already-connected peer separately receives `host-changed`.
+3. If this client isn't host: it creates an `RTCPeerConnection`, sends `offer` addressed
+   to the host; server relays it; host replies `answer`; both sides trickle `ice`.
 4. Once the data channel opens, the host pushes a full state snapshot directly over it.
    The signaling WS then only carries presence and future ICE restarts.
+
+## Host election
+
+The room's creator is always its host when connected — see
+[DECISIONS.md](DECISIONS.md) D13. Concretely, on every join (`RoomState.elect_host_on_join`
+in app/signaling.py):
+
+- An empty room: the joiner becomes host, GM or not (someone has to, and a room no one
+  has opened yet has nothing to protect by waiting).
+- A room with an existing host, joiner is not the GM: nothing changes — they connect to
+  the current host like any other peer, exactly as "Flow for a new joiner" above
+  describes.
+- A room with an existing host who isn't the GM, joiner *is* the GM: hosting moves to
+  the joiner immediately. They get `you-are-host` (with whatever snapshot the previous
+  host had most recently uploaded, same as a disconnect-triggered migration) instead of
+  connecting out to anyone; every other already-connected peer gets `host-changed` and
+  re-signals a fresh offer to the GM.
+- A room where the GM is already host: joining doesn't disturb anything, GM or not.
+
+This makes join-time promotion the mirror image of "Host migration" below (a join
+instead of a disconnect triggers it), and the two share a peer id once the GM has ever
+connected: `pick_next_host`'s temporary replacement only ever holds the role until the
+GM's next join.
 
 ## GM attestation
 
@@ -122,12 +149,14 @@ extra infrastructure.
 
 If the host's WS disconnects:
 
-1. Server picks a promotion candidate — the connected GM peer if there is one, otherwise
-   whoever has the oldest `peer-joined` timestamp still connected — and sends it
-   `you-are-host` with the last snapshot the old host uploaded. (Preferring the GM here
-   is a nicety, not load-bearing: GM-gated actions work the same regardless of who's
-   currently host, since the current host just checks `gmPeerId` before applying one —
-   see "GM attestation" above.)
+1. Server picks a promotion candidate — a *different* connected GM peer if one somehow
+   exists, otherwise whoever has the oldest `peer-joined` timestamp still connected —
+   and sends it `you-are-host` with the last snapshot the old host uploaded. If the
+   disconnecting host was the GM (the normal case per D13/"Host election" above), this
+   promotion is only ever temporary: the moment the GM reconnects, join-time election
+   hands hosting straight back to them. GM-gated actions work the same regardless of who
+   currently holds the role in the meantime, since the current host just checks
+   `gmPeerId` before applying one — see "GM attestation" above.
 2. That client promotes its local WebRTC role (it already has direct connections to no
    one — peers were only ever connected to the old host — so it must re-signal fresh
    offers to every other currently-connected peer). Server broadcasts the new host id so

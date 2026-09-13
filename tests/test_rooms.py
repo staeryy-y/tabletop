@@ -27,8 +27,13 @@ def test_guest_token_rejects_garbage(client):
 
 
 def test_guest_token_rejects_tampering(client):
+    # Flip the *first* character rather than the last: the last base64 character of a
+    # token can, depending on byte-length alignment, encode a couple of padding bits
+    # that don't affect the decoded payload at all — occasionally making a last-char
+    # flip a no-op tamper and this assertion flaky. The first character always encodes
+    # real high-order payload bits, so this is deterministic regardless of token length.
     token = issue_guest_token("abc123", "guest-1", "Alice")
-    tampered = token[:-1] + ("x" if token[-1] != "x" else "y")
+    tampered = ("x" if token[0] != "x" else "y") + token[1:]
     assert verify_guest_token(tampered, expected_slug="abc123") is None
 
 

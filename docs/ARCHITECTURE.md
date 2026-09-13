@@ -90,13 +90,18 @@ role-set of owners. See [GAME_DEFINITION.md](GAME_DEFINITION.md) "Zones."
 
 ### Roles: GM vs. players
 
-The account that created the room is always that room's **GM** — independent of which
-peer is currently the technical **host** holding canonical state (below/NETWORKING.md).
-These are two different concerns: host is about whose browser everyone else's state
-syncs from; GM is about who's allowed to reach outside what's currently on the table. Any
-connected player can already freely manipulate whatever's there — move/rotate/flip/hide
-any Card, slide any Track, roll any die (see NETWORKING.md "Trust model") — but only the
-GM can:
+The account that created the room is always that room's **GM**, and — whenever
+connected — is also always the technical **host** holding canonical state
+(below/NETWORKING.md): even though the session is otherwise P2P, it isn't a session of
+equals, and the room creator's browser is the table's "master copy" by construction. A
+different peer can hold the host role only temporarily, if they open the room before the
+GM does (see NETWORKING.md "Host election"); the moment the GM connects, hosting moves
+to them. GM and host are still conceptually distinct — host is about whose browser
+everyone else's state syncs from, GM is about who's allowed to reach outside what's
+currently on the table — they just aren't independently *decided*: GM identity picks the
+host, not the other way around. Any connected player can already freely manipulate
+whatever's there — move/rotate/flip/hide any Card, slide any Track, roll any die (see
+NETWORKING.md "Trust model") — but only the GM can:
 
 - **Spawn** a new Card/Piece/Token/Die onto the table at will — pull a blank card, drop
   in an extra monster token, add a die type mid-session — without going through a draw
@@ -278,13 +283,16 @@ which is discarded once the room has been empty for a while.
 2. Admin (or anyone with the link) opens `/room/{slug}`, enters a display name (+ room
    password if set) → server issues a short-lived, room-scoped guest token and opens a
    signaling WebSocket.
-3. The first client to open the room becomes **host** (technical state authority).
-   Separately, the server tags whichever connected peer is logged in as the room's
-   owning account as the **GM** (see "Roles" above) — in the common case that's the same
-   person, since the admin usually opens their own room first, but it isn't required to
-   be: a GM joining after someone else is already host doesn't disrupt hosting, and a
-   room with no GM connected simply has no spawn/override privileges available. The
-   server tells every peer both who the current host is and who (if anyone) is GM.
+3. The server tags whichever connected peer is logged in as the room's owning account as
+   the **GM** (see "Roles" above), and that peer is always **host** (technical state
+   authority) whenever connected. In the common case that's simple — the admin usually
+   opens their own room first, so they're host from the start — but it isn't required:
+   if a player opens the link before the GM does, that player becomes a *temporary*
+   host so the room isn't unusable while waiting, and the moment the GM connects,
+   hosting transfers to them immediately, same as a disconnect-triggered migration (see
+   NETWORKING.md "Host election"). A room with no GM connected simply has no
+   spawn/override privileges available in the meantime. The server tells every peer both
+   who the current host is and who (if anyone) is GM.
 4. Joining clients exchange SDP/ICE with the host over the signaling WS, establish a
    WebRTC data channel, and receive a full state snapshot **and the complete game
    package (rules + every asset)** directly from the host — not fetched from the server,
@@ -293,10 +301,12 @@ which is discarded once the room has been empty for a while.
 5. Gameplay proceeds peer-to-peer. The host periodically (and on significant changes)
    ships an opaque game-*state* snapshot to the server over the signaling WS, for
    recovery only — never the package/assets, which the server never touches.
-6. If the host disconnects, the server picks the next-longest-connected peer as host
-   candidate and hands it the last snapshot to resume from (see NETWORKING.md). That peer
+6. If the host disconnects, the server picks a temporary replacement — the next
+   longest-connected peer, preferring another connected GM in the unlikely case one
+   exists — and hands it the last snapshot to resume from (see NETWORKING.md). That peer
    already has the full game package from step 4, so it can resume hosting without
-   needing to fetch anything from anywhere.
+   needing to fetch anything from anywhere. If the disconnected peer was the GM, hosting
+   reverts to them automatically the moment they reconnect (step 3).
 
 ## Deployment (server-watcher compliance)
 

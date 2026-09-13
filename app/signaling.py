@@ -59,6 +59,25 @@ class RoomState:
         pool = gm_candidates or candidates
         return min(pool, key=lambda p: p.joined_at).peer_id
 
+    def elect_host_on_join(self, peer_id: str, is_gm: bool) -> tuple[bool, bool]:
+        """The room's creator is always its host when connected (see docs/DECISIONS.md
+        D13) — this is the join-time half of that; pick_next_host above is the
+        disconnect-time half. A non-GM peer can still become a *temporary* host by
+        joining an otherwise-empty room (so it isn't unusable before the GM shows up),
+        but the moment the GM joins — first or not — hosting moves to them, mutating
+        `host_peer_id` here exactly like a migration would.
+
+        Returns (promoted, displaced_a_different_host): `promoted` is whether this join
+        made `peer_id` host; `displaced_a_different_host` is whether that took hosting
+        away from someone else who needs a `host-changed` broadcast (the plain
+        first-join-into-an-empty-room case has no one to tell)."""
+        is_first = self.host_peer_id is None
+        had_different_host = not is_first and self.host_peer_id != peer_id
+        promoted = is_first or (is_gm and had_different_host)
+        if promoted:
+            self.host_peer_id = peer_id
+        return promoted, promoted and had_different_host
+
 
 _rooms: dict[str, RoomState] = {}
 
@@ -112,9 +131,7 @@ async def room_socket(websocket: WebSocket, slug: str, token: str) -> None:
     peer = Peer(peer_id=peer_id, name=guest["displayName"], is_gm=is_gm, ws=websocket)
     state.peers[peer_id] = peer
 
-    is_first = state.host_peer_id is None
-    if is_first:
-        state.host_peer_id = peer_id
+    promoted, needs_host_changed_broadcast = state.elect_host_on_join(peer_id, is_gm)
 
     await _send(
         peer,
@@ -129,13 +146,17 @@ async def room_socket(websocket: WebSocket, slug: str, token: str) -> None:
             "peers": [_presence(p) for p in state.peers.values() if p.peer_id != peer_id],
         },
     )
-    if is_first:
+    if promoted:
         await _send(peer, {"type": "you-are-host", "snapshot": state.snapshot})
     await _broadcast(
         state,
         {"type": "peer-joined", **_presence(peer)},
         exclude=peer_id,
     )
+    if needs_host_changed_broadcast:
+        # Tell whoever was hosting (and everyone else) to re-link to the GM instead —
+        # the same message a disconnect-triggered migration sends to survivors.
+        await _broadcast(state, {"type": "host-changed", "hostPeerId": peer_id}, exclude=peer_id)
 
     try:
         while True:
