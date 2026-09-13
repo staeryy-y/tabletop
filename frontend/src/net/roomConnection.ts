@@ -6,8 +6,10 @@
 // sees the two interfaces below.
 import { PileState, TableModel } from "../engine/pileModel";
 import { PeerLink } from "./peerLink";
-import { RelayPeerLink, SignalingLike } from "./relayPeerLink";
+import { PeerLinkWithFallback } from "./peerLinkWithFallback";
+import { SignalingLike } from "./relayPeerLink";
 import { HostTableSync, TableEvent, TableRequest } from "./syncProtocol";
+import { PeerRole } from "./webrtcPeerLink";
 
 /** What TableApp calls to act — spawn a card, drag one, flip it, ... — without caring
  * whether this client is host (applied immediately) or a peer (sent over the network). */
@@ -22,12 +24,15 @@ export interface TableView {
   applyEvent(event: TableEvent): void;
 }
 
-/** Swap in a different PeerLink implementation (e.g. real WebRTC once that lands) by
- * passing a different factory — RoomConnection itself never constructs a transport by
- * name, so upgrading the transport later needs no change here. Defaults to the relay. */
-export type PeerLinkFactory = (signaling: SignalingLike, remotePeerId: string) => PeerLink;
+/** Swap in a different PeerLink implementation by passing a different factory —
+ * RoomConnection itself never constructs a transport by name, so upgrading the
+ * transport later needs no change here. `role` matters for real WebRTC (only one side
+ * of a link may create the offer — see webrtcPeerLink.ts) but a transport that doesn't
+ * care, like a bare relay, is free to ignore it. Defaults to
+ * peerLinkWithFallback.ts: real WebRTC, falling back to the WS-relay automatically. */
+export type PeerLinkFactory = (signaling: SignalingLike, remotePeerId: string, role: PeerRole) => PeerLink;
 
-const defaultLinkFactory: PeerLinkFactory = (signaling, remotePeerId) => new RelayPeerLink(signaling, remotePeerId);
+const defaultLinkFactory: PeerLinkFactory = (signaling, remotePeerId, role) => new PeerLinkWithFallback(signaling, remotePeerId, role);
 
 /** A peer-to-host message that isn't a table mutation — asks the host to (re)send a
  * snapshot. Lives outside TableRequest's union (syncProtocol.ts) since it's a
@@ -81,7 +86,9 @@ export class RoomConnection {
    * it — asking again here is what makes catch-up correct instead of merely usual. */
   becomePeerOf(hostPeerId: string): TableSyncClient {
     this.teardownHostRole();
-    const link = this.makeLink(this.signaling, hostPeerId);
+    // The peer always initiates the offer to the host — see docs/NETWORKING.md's
+    // signaling flow and webrtcPeerLink.ts's doc comment on PeerRole.
+    const link = this.makeLink(this.signaling, hostPeerId, "initiator");
     this.linkToHost = link;
     link.onMessage((msg) => this.view.applyEvent(msg as TableEvent));
     link.send(REQUEST_SNAPSHOT);
@@ -95,7 +102,8 @@ export class RoomConnection {
    * relying on this alone isn't safe. */
   addPeer(peerId: string): void {
     if (!this.hostSync || peerId === this.selfPeerId || this.peerLinks.has(peerId)) return;
-    const link = this.makeLink(this.signaling, peerId);
+    // The host always answers rather than initiates — see becomePeerOf's comment.
+    const link = this.makeLink(this.signaling, peerId, "answerer");
     link.onMessage((msg) => {
       if (isRequestSnapshot(msg)) this.hostSync!.sendSnapshotTo(peerId);
       else this.hostSync!.handleRequest(peerId, msg as TableRequest);
