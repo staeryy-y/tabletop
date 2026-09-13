@@ -40,8 +40,10 @@ This is the core deliverable: a shared table that plays *any* tabletop game badl
 functionally before a single game-specific line of config exists.
 
 - PixiJS canvas: pan/zoom, a table surface.
-- **Card**: import a set of card images/text, move/rotate/flip freely; overlapping cards
-  merge into a **Stack** (shuffle/draw/deal/cut/peek).
+- **Card**: import a set of card images/text, move/rotate/flip/**hide** freely (a hidden
+  card shows its front only to whoever hid it, plus their private eye-icon reminder —
+  see [ARCHITECTURE.md](ARCHITECTURE.md) "Hiding a card"); overlapping cards merge into a
+  **Stack** (shuffle/draw/deal/cut/peek).
 - **Piece**: import a board/tile image, move/rotate/place freely; optional connector
   snapping; never merges into a stack.
 - **Token**: small markers with a couple of named states, ride on top of a Card/Piece.
@@ -67,27 +69,54 @@ functionally before a single game-specific line of config exists.
   with `pool_die: pip`) correctly turns a bare stat reference into a dice-pool roll,
   proving the same grammar covers both games.
 
-## M5 — Zones, phases, triggers
+## M5 — Cards & private hands: Poker and Mafia/Werewolf
 
-- **Zone** visibility (`public`/`owner-only`/`owner+host`), delivered as targeted
-  messages per NETWORKING.md, not broadcast.
-- **Phase**/turn-order switching and the fixed trigger action vocabulary (`draw`, `roll`,
-  `contest`, `move-token`, `set-track`, `switch-phase`, `assign-role`, `reveal-zone`).
-- Ship enough of `game-defs/betrayal-house-on-the-hill.yaml` to prove the model: custom
-  pip dice, sliding traits, three tagged card sets, a tile draw pile with connectors and
-  `prevent_disconnection`, a haunt-roll trigger that switches phase and reveals a secret
-  zone to one assigned role.
-- **Acceptance:** playing through the Betrayal definition to a haunt trigger correctly
-  hands one browser a secret zone the others never receive, and turn order changes for
-  the rest of the session.
+- Ship `game-defs/poker-5-card-draw.yaml`: a standard 52-card deck, a private
+  `owner-only` hand Zone per player (5 cards each), a discard-and-redraw-once action, and
+  a chip-count Track per player. No auto-adjudicated showdown — players look at their own
+  hand and each other's revealed cards and settle it themselves, same philosophy as
+  everything else in this design (see GAME_DEFINITION.md "Why no rules layer?").
+- Ship `game-defs/mafia-werewolf.yaml`: a generic hidden-role party game (this project's
+  own role names/text — Villager/Mafia/Detective, or Werewolf/Villager/Seer, not any
+  commercial edition's) — content only: a shuffled stack of role Cards, one dealt face
+  down to each player. No phases, no vote automation, no win-condition check — night/day,
+  voting, and ending the game are the group's own convention, exactly like the physical
+  party game, using nothing but Hide (to keep your own role secret) and ordinary chat.
+- **Acceptance:** each player's client renders its own 5 poker cards / one role card
+  face-up and everyone else's as face-down backs only (verify the front-face payload for
+  another player's hand never reaches a non-owning peer at all — not just hidden in the
+  UI); a poker discard-and-redraw round trips correctly through the deck/discard Stacks.
 
-## M6 — Real WebRTC + host migration
+**Why Poker and Mafia/Werewolf, and not bundled Betrayal/Avalon definitions:** both of
+those games' actual rules text, card content, and (for Avalon) character names/art are
+copyrighted — useful as design-validation references in
+[GAME_DEFINITION.md](GAME_DEFINITION.md) (a few quoted lines, for design commentary), but
+not something to ship as real game data in this repo. Standard playing cards and the
+generic Mafia/Werewolf party-game format are public domain and need no reproduced text or
+art, while still exercising exactly what those two stress tests showed the engine
+needed: private hands via Card/Hide, nothing more — see GAME_DEFINITION.md's "Design-
+validation references" for the full walkthrough of why neither game needed an automated
+rules layer to be fully playable.
+
+**Known gap, deferred rather than solved with an unwanted game:** none of the bundled
+examples currently exercise Piece + connector + draw-pile board-building (Betrayal's
+room tiles; Dominoes would have covered it but was rejected as the pick). That mechanic
+still works per [GAME_DEFINITION.md](GAME_DEFINITION.md) "Pieces," it's just not proven
+by a bundled example yet — worth revisiting whenever a suitable public-domain
+tile-placement game (or an original one) is wanted.
+
+## M6 — Real WebRTC + asset transfer + host migration
 
 - Swap the M3–M5 relay transport for actual `RTCPeerConnection` data channels, using the
   signaling WS purely for offer/answer/ICE exchange (protocol already designed for this
   in NETWORKING.md — this milestone is transport-only, no message-shape changes).
+- Real chunked binary asset transfer per NETWORKING.md "Asset distribution" (earlier
+  milestones can get away with assets small enough to inline, or just ship
+  game-def-bundled packages with few/no images).
 - Keep the WS-relay path as the automatic fallback when P2P setup fails/times out.
-- Host migration on host disconnect, backed by the periodic snapshot upload.
+- Host migration on host disconnect, backed by the periodic snapshot upload — the
+  promoted host already has the full game package from its own join, per M2/step 4 in
+  ARCHITECTURE.md "Room lifecycle."
 - **Acceptance:** a session with 3+ tabs runs with real WebRTC (verify via
   `chrome://webrtc-internals`); killing the host tab promotes another peer and play
   continues from the last snapshot; forcing an ICE failure falls back to relay
@@ -95,8 +124,8 @@ functionally before a single game-specific line of config exists.
 
 ## Later / explicitly out of scope for v1
 
-- A general scripting layer beyond the fixed trigger-action vocabulary (see
-  GAME_DEFINITION.md "Why not just script it?").
+- Any rules/flow layer at all — turns, phases, roles, win conditions, triggers. Explicit
+  non-goal, not a deferred feature (see GAME_DEFINITION.md "Why no rules layer?").
 - Fog of war, dynamic lighting, hex/square grid movement costs.
 - Persistent campaigns across multiple sessions (rooms are currently per-session; a
   "save table state to resume later" flow is a natural follow-up once the snapshot

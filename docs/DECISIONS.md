@@ -36,10 +36,12 @@ already exists for signaling. See NETWORKING.md.
 
 ## D4 — SQLite for server-owned data
 
-The server only ever stores accounts, room metadata, rulesets, and asset filenames — low
+The server only ever stores accounts and room metadata (a couple of small tables) — low
 volume, single-process, no concurrent-write contention worth a client/server DB. SQLite
 ships in the Python stdlib, needs no service to install or root to run, and matches every
-sibling project in this workspace (file-uploader, journal, splitter, etc.).
+sibling project in this workspace (file-uploader, journal, splitter, etc.). See D14 for
+why that's *all* it stores — no rulesets or asset bytes, unlike an earlier version of
+this design.
 
 ## D5 — Two-tier identity: accounts for admins, ephemeral tokens for guests
 
@@ -102,19 +104,28 @@ than add a flag to suppress stacking on certain Cards, Piece is its own primitiv
 own (non-stacking, connector-aware) placement behavior, and both can still originate from
 the same underlying shuffle/draw-pile mechanic. See GAME_DEFINITION.md.
 
-## D11 — Game definitions are a fixed, data-only trigger vocabulary, not a scripting
-language
+## D11 — No rules/flow layer at all: no scripting, and no trigger system either
+(revised)
 
-Betrayal alone has 50 haunts' worth of bespoke logic; a real per-game scripting layer
-(Tabletop Simulator's Lua model) could express all of it, but at the cost of sandboxing
-untrusted uploaded scripts and a large, ongoing engine surface. Instead, the engine
-automates only the mechanical bookkeeping common to most tabletop games (shuffle, draw,
-roll, track math, reveal-to-role) through a small fixed action vocabulary, and leaves a
-specific scenario's unique judgment calls to the players — the same way a physical
-rulebook or haunt booklet already expects a human to read and apply it. See
-GAME_DEFINITION.md "Why not just script it?" This is consistent with D6/D9's cooperating-
-players assumption: there's no adversary to defend the rules against, so under-enforcing
-edge cases costs nothing a real tabletop group doesn't already tolerate.
+An earlier version of this decision proposed a small, fixed, data-only trigger
+vocabulary (`when X happens, do Y`) as the middle ground between "no automation" and "a
+full scripting language" — reasoning that Betrayal's 50 haunts needed *some* automated
+bookkeeping (draw-on-entry, reveal-to-role, phase switches) and a fixed action list would
+cover the common cases without the sandboxing burden of real scripting. On reflection
+(prompted directly: "the goal isn't to simulate the games, it's just to allow the players
+to move things around like they would on a tabletop"), that middle ground was still
+solving the wrong problem. A trigger system — however small and data-only — is still the
+engine forming an opinion about what should happen next, which is a fundamentally
+different (and open-ended) project from giving people physical-feeling objects to move
+around themselves. The corrected position: **the engine has no concept of turns, phases,
+roles, or win conditions, full stop** — not "a small fixed set of them." A GM and players
+provide 100% of game flow themselves, the same as at a physical table; the engine's
+entire job is objects (Card/Piece/Token/Die/Track/Zone) behaving the way their physical
+counterparts do. See GAME_DEFINITION.md "Why no rules layer?" This is consistent with
+D6/D9's cooperating-players assumption for a different reason than originally stated:
+it's not that under-enforcing costs nothing to a trusted group (true, but beside the
+point) — it's that there's nothing here to enforce in the first place, since the engine
+was never meant to know the rules.
 
 ## D12 — Pixel-art visual theme, as a rendering default rather than an object-model rule
 
@@ -127,3 +138,78 @@ format: a room using photographed/painted card art (e.g. a scan of real Betrayal
 still renders correctly, it just doesn't get the crisp up-scaling treatment native
 pixel-art assets do. Keeping this a presentation detail, not a schema rule, avoids
 coupling the generic engine to one game's/one project's specific aesthetic.
+
+## D13 — GM is a role bound to the room-creating account, decoupled from "host"
+
+The room's creator is always its GM, independent of which peer happens to be the
+technical host holding canonical state (D3's star topology) — these solve different
+problems. Host is a networking concern (whoever's state everyone else's client trusts
+and syncs deltas from) and can migrate on disconnect. GM is a permissions concern (who
+may spawn/despawn objects or peek at anything hidden) and is
+simply re-attested by the server on every connection, based on `rooms.owner_user_id` — it
+never needs migration logic of its own, and it survives the GM's own reconnects without
+depending on connection order the way host election does. Tying it to the account system
+means it's the one place server-known identity is allowed to affect an otherwise fully
+P2P session — everything about manipulating what's *already* on the table stays purely
+peer-trust-based (see NETWORKING.md "Trust model"); only bringing new things into
+existence, removing them, or seeing something hidden needs the server's word for who's
+allowed. Host election prefers a connected GM as the promotion candidate when the current
+host
+drops, since it's a natural continuation of "the GM already runs the table" (see D3), but
+that's a nicety — GM-gated actions are checked against the server-attested `gmPeerId` by
+whoever the current host is, regardless of whether the GM is that host.
+
+## D14 — Game packages (rules + assets) are P2P-distributed files; the server stores none
+of it
+
+Requested explicitly: extend "mostly P2P" (D3) to cover assets too, not just game state.
+A room's card/tile/token images now travel host-to-peer over the data channel, the same
+star topology as everything else, and are never uploaded to or served by the server —
+`data/uploads/` and the `assets`/`game_defs` tables from an earlier version of this design
+are gone. The server's only remaining involvement is (a) serving the handful of bundled
+example packages as plain static files, exactly like `frontend/dist/` — no database, no
+upload path — and (b) recording, per room, whether it's using a bundled example or "a
+custom one" (`rooms.game_def_ref`), never the custom one's actual content. The tradeoff
+this accepts: a custom package that every holder has left the session without exporting
+is gone — there's no server-side copy to fall back to. That's judged acceptable in
+exchange for a genuinely asset-free, single-table server; see NETWORKING.md "Asset
+distribution" for why sending the *full* package to every joiner up front (rather than
+fetching assets lazily on demand) also avoids a subtler problem: a peer promoted to host
+later needs to already have everything, not just what it happened to need so far.
+
+## D15 — Zones stay just public/owner-only/owner+host; hidden-role games need nothing
+more than per-card Hide (revised)
+
+An earlier version of this decision added role-set Zone ownership and a computed,
+optionally-ambiguous reveal-query mechanism to Zones, reasoning that *Avalon*'s
+overlapping hidden knowledge (Evil knows Evil; Merlin knows Evil except Mordred;
+Percival knows {Merlin, Morgana} but not which is which) needed the engine to compute
+"who secretly knows what about whom." Directly challenged on this ("doesn't hidden card
+viewing suffice? ... the goal isn't to simulate the games") — and correctly: a player
+needing to know their *own* role is exactly what per-card Hide already provides (deal a
+face-down role Card, its owner Hides it), and the cross-player knowledge Avalon's ritual
+exists to grant — evil knowing evil, Merlin knowing evil — is not something the engine
+needs to compute at all. It's something the GM or group arranges themselves (a private
+message, a verbal agreement), the same as the physical ritual it replaces, just without
+needing the ritual's choreography since there's no paper to protect. See
+GAME_DEFINITION.md "Why no rules layer?" and its Avalon design-validation note. Betrayal's
+Quest-card submission (secret, then shuffled, then revealed) still needed *nothing new
+at all* even before this walk-back — it's exactly a Card Stack — which was itself the
+first sign the more elaborate machinery wasn't earning its keep.
+
+## D16 — Per-card Hide is a base primitive; there is no `simultaneous-reveal` Zone mode
+
+Any single Card can be hidden ad hoc via a right-click toggle, with no Zone or game
+definition involved at all — the hider's own client renders its front (plus a private
+eye-icon reminder), everyone else's renders only its back, enforced the same
+non-broadcast way as a Zone (see NETWORKING.md "Trust model"). This is the one piece of
+the earlier, more elaborate Zone design (D15) that survives, because it's not game-flow
+automation — it's a physical behavior (holding a card so only you can see it) that has
+nothing to do with any specific game's rules. What did *not* survive: a
+`simultaneous-reveal` Zone timing mode originally added for secret-ballot voting
+(Avalon's team vote). Under the cooperating-players assumption (NETWORKING.md "Trust
+model"), enforcing "hidden until everyone's submitted" was solving a problem that
+doesn't exist here — players who won't cheat also won't peek at a pile of face-down
+ballots before the group agrees to flip them, the same social contract that makes a
+physical secret ballot work with no mechanism at all. A vote, if a game wants one, is
+just players placing Cards face-down and flipping them together by agreement.

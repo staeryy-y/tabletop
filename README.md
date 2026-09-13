@@ -1,15 +1,19 @@
 # RPG Tabletop
 
 A generic, browser-only virtual tabletop — think Tabletop Simulator, but no client
-install and no 3D engine. The server is a thin coordinator (accounts, rooms, game
-definitions, bootstrap assets, and WebRTC signaling); actual gameplay — cards, boards,
-dice, chat — is synced peer-to-peer between browsers.
+install and no 3D engine. The server is a thin coordinator: accounts, rooms, and WebRTC
+signaling, full stop. Everything else — cards, boards, dice, chat, and every rule/image a
+game needs — is synced and shared peer-to-peer between browsers; the server never stores
+or serves a single game asset.
 
-It's not RPG-specific. A D&D-style character sheet with `/roll 1d20+dex` and a
-board-builder game with custom dice, a shuffled deck of room tiles, and a secret traitor
-role (validated against the actual rules of *Betrayal at House on the Hill* — see
-[docs/GAME_DEFINITION.md](docs/GAME_DEFINITION.md)) are both just configurations of the
-same small object model, not two different code paths.
+It's not RPG-specific, and it's **not a rules engine** — it has no idea what a card's
+text means, whose turn it is, or when a game ends, any more than a physical table does.
+It just gives people physical-feeling objects (cards, dice, boards, tokens) to move
+around together over the network. A D&D-style character sheet with `/roll 1d20+dex`, a
+board-builder game with custom dice (stress-tested against the actual rules of
+*Betrayal at House on the Hill*), and a hidden-role game like *Avalon* or Mafia are all
+just different starting arrangements of the same small object model, not different code
+paths — see [docs/GAME_DEFINITION.md](docs/GAME_DEFINITION.md) "Why no rules layer?"
 
 **Status:** planning. Nothing is implemented yet — see `docs/` for the design and
 `docs/PLAN.md` for the build order.
@@ -20,7 +24,7 @@ same small object model, not two different code paths.
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Object model, components, repo layout, data model, room lifecycle |
 | [docs/NETWORKING.md](docs/NETWORKING.md) | WebRTC signaling, host-authoritative sync, reconnection, trust model |
-| [docs/GAME_DEFINITION.md](docs/GAME_DEFINITION.md) | The per-room game definition format: cards, pieces, dice, tracks, triggers |
+| [docs/GAME_DEFINITION.md](docs/GAME_DEFINITION.md) | The per-room game definition format — pieces and starting layout only, no rules |
 | [docs/PLAN.md](docs/PLAN.md) | Milestones / build order |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Key architectural decisions and why |
 
@@ -32,21 +36,32 @@ same small object model, not two different code paths.
 - **Rooms, not persistent campaigns (v1).** A logged-in admin creates a room, optionally
   picks a game definition, and gets a shareable link (+ optional password). Anyone with
   the link joins as a guest with just a display name — no account needed.
-- **Mostly peer-to-peer.** Once a room's players are connected, the table — cards, board
-  pieces, tokens, dice, chat — syncs directly browser-to-browser over WebRTC data
-  channels. The FastAPI server only brokers the initial handshake (WebSocket signaling)
-  and holds a recovery snapshot in case the host reconnects.
-- **A handful of generic pieces, not a rules engine.** Card (moves, rotates, flips, and
-  merges into a shuffleable Stack when piled), Piece (board tiles/terrain — moves and
-  rotates but never stacks, since building a board isn't the same act as piling cards),
-  Token, Die (any custom face set, not just d4/d6/d20), Track (a bounded stat you slide,
-  not just a number), Actor, Zone (public/private visibility), and Phase/turn-order. Any
-  tabletop game is some starting arrangement of these, optionally with a short list of
-  `when X happens, do Y` triggers automating the tedious bookkeeping. See
-  docs/GAME_DEFINITION.md.
+- **Mostly peer-to-peer — assets included.** Once a room's players are connected, the
+  table — cards, board pieces, tokens, dice, chat — syncs directly browser-to-browser
+  over WebRTC data channels. A room's whole game package (rules **and every image it
+  uses**) is a portable file its host loads and P2P-distributes to joiners; the server
+  only brokers the initial handshake (WebSocket signaling) and holds a recovery snapshot
+  in case the host reconnects. Export/import that package as a file anytime. See
+  docs/NETWORKING.md "Asset distribution."
+- **A handful of generic pieces, and nothing that understands game rules.** Card (moves,
+  rotates, flips, hides, and merges into a shuffleable Stack when piled), Piece (board
+  tiles/terrain — moves and rotates but never stacks, since building a board isn't the
+  same act as piling cards), Token, Die (any custom face set, not just d4/d6/d20), Track
+  (a bounded stat you slide, not just a number), Actor, and Zone (public/private
+  visibility). No turns, phases, roles, or win conditions — those are the group's own
+  job, same as at a physical table. See docs/GAME_DEFINITION.md "Why no rules layer?"
+- **Secrecy without a game definition.** Right-click any Card to hide it — you keep
+  seeing its front (with a private reminder icon), everyone else sees only its back. No
+  Zone or setup required; it's the same mechanism a Zone formalizes for a whole region.
 - **Assumes a cooperating group, like a real table.** No anti-cheat, no per-object
   ownership locks, no cryptography for secret roles — just don't broadcast what a player
   shouldn't see. See docs/NETWORKING.md "Trust model."
+- **The room's creator is the GM.** Independent of whichever peer's browser happens to be
+  holding state at the moment (see docs/NETWORKING.md), the admin who created the room
+  can spawn or delete any object and peek at anything hidden. Everyone else can freely
+  manipulate whatever's already on the table (including sliding tracks — no ownership
+  lock there either), but only the GM conjures new things onto it or looks at secrets
+  that aren't theirs. See docs/ARCHITECTURE.md "Roles: GM vs. players."
 
 ## Stack
 

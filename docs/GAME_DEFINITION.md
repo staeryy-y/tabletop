@@ -1,17 +1,48 @@
 # Game definitions
 
-A game definition is an optional YAML (or JSON — same schema) file a room picks at
-creation. It describes a specific game's fixed content — card sets, custom dice, tracks,
-board layout — and a short list of `when X happens, do Y` triggers for its bookkeeping.
-It is layered on top of the object model in [ARCHITECTURE.md](ARCHITECTURE.md); a room
-with no game definition at all is still fully playable as a freeform sandbox.
+**This is a digital prop box, not a rules engine.** A game definition is an optional
+YAML (or JSON — same schema) file a room picks at creation. All it does is declare a
+specific game's *pieces* — custom dice, character-sheet tracks, card sets and their
+images, board tiles and their connectors — and where they start on the table. It does
+**not** describe turns, phases, roles, win conditions, or "when X happens, do Y" rules.
+A room with no game definition at all is just as playable — it's a blank table with no
+pieces on it yet.
 
-**Design ceiling, stated up front:** this format is data, not a programming language.
-It cannot express arbitrary game logic, and that's deliberate — see "Why not just script
-it?" at the bottom. What it needs to express is: what the pieces are, how they start out,
-and which of the tedious mechanical steps (shuffle, draw, roll, reveal) get automated.
-Everything else — the actual judgment calls a specific scenario's rules text asks players
-to make — stays with the players, the same way it would at a physical table.
+Everything about how a game actually *plays* — whose turn it is, who's secretly what,
+when the game ends, what a specific card's text means you should do — is left entirely
+to the players and the GM, exactly as it would be at a physical table. The engine's job
+is to let people move, flip, hide, stack, and roll physical-feeling objects together
+over the network; it is deliberately ignorant of what any of it *means*. See "Why no
+rules layer?" near the bottom for why this is the right ceiling, not a shortcut.
+
+## Game packages: portable files, not a server-hosted library
+
+A **game package** is a manifest plus the assets it references — a folder (or a zip of
+one) shaped like:
+
+```
+my-game/
+  manifest.yaml        # everything described in this document
+  assets/
+    event-back.png
+    tiles/kitchen.png
+    tiles/catacombs.png
+```
+
+The manifest references assets by path within the package (`assets/event-back.png`,
+exactly as in the examples below); each is also content-hashed for the P2P transfer
+layer (see [NETWORKING.md](NETWORKING.md) "Asset distribution"), so two packages that
+happen to reuse the same image never cause a redundant transfer.
+
+There is no server-hosted library to upload a package *into*. An admin picks a package
+one of two ways when creating a room: one of the handful of examples bundled with this
+repo (`game-defs/`, committed as plain static files — see
+[ARCHITECTURE.md](ARCHITECTURE.md)), or a package file from their own computer, which
+their browser loads and holds in memory for the room — the server only ever records that
+the room uses "a custom package," never its content. Any player can export the room's
+current package back out as a file at any time (useful for editing rulebook text in a
+plain editor, or handing it to a friend to reuse in their own room) — this is a purely
+local operation on whatever's already in the client's memory, not a server request.
 
 ## Cards are the workhorse, not "decks"
 
@@ -22,7 +53,7 @@ starting layout places several of them at the same table position — they merge
 
 ```yaml
 cards:
-  - set: event          # a tag, not a type — used to filter/target a stack
+  - set: event          # just a label, for organizing the starting layout
     back: assets/event-back.png
     entries:
       - id: creepy-puppet
@@ -33,7 +64,7 @@ cards:
 
 ### Stack operations
 
-Any player can move/rotate/flip any single Card at any time (see ARCHITECTURE.md
+Any player can move/rotate/flip/hide any single Card at any time (see ARCHITECTURE.md
 "Trust model" in NETWORKING.md — manipulation is unlocked, matching a physical table).
 When Cards land on each other they become a Stack, which additionally supports:
 
@@ -45,50 +76,46 @@ When Cards land on each other they become a Stack, which additionally supports:
 | `cut` | Split into two Stacks at a point, optionally recombine in swapped order |
 | `peek` | Reveal the top (or all) card faces to whoever the containing Zone permits, without removing them |
 
-Dragging a single card off a Stack (grabbing what's on top, or spreading it to pick a
-specific one) is the same "pull a Card out" gesture whether or not a game definition is
-loaded — a freeform room and a defined one use identical mechanics here. This merge/split
-behavior is specific to Cards — see **Pieces** below for board-building objects, which
-deliberately don't work this way.
+These are the same handful of things a person does with a physical deck; nothing here
+knows what any card *means*, only how piles of cards behave. Dragging a single card off
+a Stack (grabbing what's on top, or spreading it to pick a specific one) is the same
+"pull a Card out" gesture whether or not a game definition is loaded.
 
 ## Pieces: board tiles, terrain, and anything else you place rather than stack
 
 A **Piece** is a movable/rotatable object that is not a deck member: a room tile, a
 terrain hex, a board section, a standee. The distinction from Card matters because
-Betrayal-style board-building genuinely behaves differently from a hand of cards: you
-draw a tile and *place* it into a growing layout — you never pile two placed tiles on top
-of each other the way you'd pile discarded cards. So Pieces never merge into a Stack, even
-when they visually overlap (a pawn Token standing on a tile Piece is just an overlap, not
-a special object).
+board-building genuinely behaves differently from a hand of cards: you draw a tile and
+*place* it into a growing layout — you never pile two placed tiles on top of each other
+the way you'd pile discarded cards. So Pieces never merge into a Stack, even when they
+visually overlap (a pawn Token standing on a tile Piece is just an overlap, not a
+special object).
 
-A Piece can still start life in a face-down **draw pile** (shuffle/draw work exactly like
-a Card Stack), and optionally declares **connectors** so placing it snaps it edge-to-edge
-onto an open connector of whatever's already on the board:
+A Piece can still start life in a face-down **draw pile** (shuffle/draw work exactly
+like a Card Stack), and optionally declares **connectors**, purely as a placement aid —
+dragging it near an open connector on an already-placed Piece snaps it into alignment,
+the same convenience a jigsaw piece's shape gives you, nothing more:
 
 ```yaml
 pieces:
   - set: room-tile
     back: assets/tile-back.png
-    draw_pile: true                # starts shuffled face-down; draw() to place one
+    draw_pile: true                # starts shuffled face-down; a player draws one by hand
     entries:
       - id: kitchen
         front: { image: assets/tiles/kitchen.png }
-        tags: [floor:ground]        # which draw pile(s) this can come from
         connectors: [north, south, east, west]
-        symbol: event                # placing this tile auto-draws from the "event" card set
       - id: catacombs
         front: { image: assets/tiles/catacombs.png }
-        tags: [floor:basement]
         connectors: [north]
-        barrier: true                # two-part room; crossing needs a trait roll (see triggers)
-board:
-  prevent_disconnection: true        # opt-in engine rule: don't allow a placement that
-                                      # seals a section off with no remaining connector
 ```
 
-Everything else about a Piece is freeform: any player can pick it up, move it, and rotate
-it at any time, same as a Card — the only thing that's different is the absence of
-stack/shuffle semantics once it's on the table.
+Whether a given placement is *allowed* by the game's actual rules (matching floors, not
+sealing off a section, whatever a specific rulebook says) is for the players to judge —
+the same as noticing you've placed a physical tile somewhere that doesn't make sense.
+Everything else about a Piece is freeform: any player can pick it up, move it, and
+rotate it at any time, same as a Card — the only thing that's different from a Card is
+the absence of stack/shuffle semantics once it's on the table.
 
 ## Tokens
 
@@ -112,7 +139,7 @@ A die is just a named face list — not limited to d4/d6/d20:
 
 ```yaml
 dice:
-  - key: pip                       # Betrayal's custom die: 3 blank, 2 one-dot, 1 two-dot
+  - key: pip                       # a custom die: 3 blank faces, 2 one-dot, 1 two-dot
     faces: [0, 0, 0, 1, 1, 2]
   - key: d6
     sides: 6                       # shorthand for faces: [1..6]
@@ -124,13 +151,14 @@ A **pool** rolls N dice of one type and combines them with an aggregator: `sum` 
 `count(value_or_predicate)` (count successes, e.g. "count ≥ 4" for a d6 pool), or
 `highest(n)`/`lowest(n)` (keep only some dice, e.g. advantage). Pool size N can be a
 literal, or driven by a Track's current value (see below) — that one mechanism covers
-both "roll 1d20" (literal) and "roll dice equal to your current Might" (track-driven)
-without special-casing either game.
+both "roll 1d20" (literal) and "roll dice equal to your current stat" (track-driven).
+This is just a dice tray that also knows how to add up what it rolled — the equivalent
+of a player doing their own arithmetic, not the engine deciding what a roll means.
 
 ## Tracks
 
-A bounded position, not a plain number+modifier — this is what a D&D ability score and a
-Betrayal trait have in common, even though they resolve completely differently:
+A bounded slider, not a plain number+modifier — the digital equivalent of a physical
+stat clip or a counter dial:
 
 ```yaml
 tracks:
@@ -142,22 +170,21 @@ tracks:
   - key: might
     label: Might
     values: [1, 2, 3, 4, 5]
-    death_below_min: haunt          # only fatal once the "haunt" phase is active
-    allow_overflow: true            # an item can push current past the printed max;
-                                     # losing that item removes only the overflow amount
     pool_die: pip                   # bare `might` in a roll → roll `values[current]`
                                      # dice of type `pip`, aggregator `sum`
 ```
 
-`resolve_as` and `pool_die` are two different ways a bare stat reference can resolve in
-the roll grammar below; a track picks whichever (or neither) matches how the game
-actually uses it. Both the D&D-style "score → modifier" pattern and the Betrayal-style
-"stat → dice pool size" pattern are the *same* Track primitive with a different resolution
-rule — no per-game engine code either way.
+A Track just clamps to its declared range, the way a physical slider can't move past its
+printed ends — it has no opinion on what hitting either end *means* for the game (death,
+a level-up, whatever a rulebook says); that's for the players to notice and act on, the
+same as watching a physical stat clip hit the skull symbol. `resolve_as` and `pool_die`
+are two different conveniences for how a bare stat reference expands in the roll grammar
+below — a calculator shortcut for arithmetic a player would otherwise do by hand, not
+game logic.
 
 ## Roll grammar
 
-Used after `/roll` in chat and as any `roll:` value in a trigger or macro.
+Used after `/roll` in chat and as any `roll:` value in a macro.
 
 ```
 expr      := term (("+" | "-") term)*
@@ -167,37 +194,33 @@ aggregator   := "sum" | "count" COMPARATOR VALUE | "highest" INTEGER | "lowest" 
 stat-ref  := IDENTIFIER ["." "raw"]
 ```
 
-A bare `stat-ref` expands per its Track's resolution rule: a formula-resolved Track
-becomes a number; a pool-die Track becomes `literal-pool` with that track's current value
-as the count. Examples:
+A bare `stat-ref` expands per its Track's resolution rule (above). Examples:
 
-| Input | Game | Meaning |
-|---|---|---|
-| `1d20 + dex` | D&D-style | d20 + Dexterity modifier |
-| `2d20:highest1 + str + proficiency` | D&D-style | attack with advantage |
-| `might` | Betrayal-style | roll `might` pip-dice, sum the dots (a Trait Roll) |
-| `4d6:lowest1` (dropped) | either | ability-score-style roll, drop lowest |
-| `1d6:count>=4` | generic | a "successes" pool, e.g. a Warhammer-style check |
+| Input | Meaning |
+|---|---|
+| `1d20 + dex` | d20 + Dexterity modifier |
+| `2d20:highest1 + str + proficiency` | attack with advantage |
+| `might` | roll `might` pip-dice, sum the dots |
+| `4d6:lowest1` | ability-score-style roll, drop lowest die |
+| `1d6:count>=4` | a "successes" pool, e.g. a Warhammer-style check |
 
-Opposed rolls (Betrayal's combat: both sides roll their pool, higher wins, damage =
-difference) aren't part of the expression grammar — they're a built-in **trigger action**,
-`contest(a, b)`, described below, since "who wins and what happens" is a resolution
-pattern, not an arithmetic one.
+Comparing two rolls to decide a winner, applying damage, deciding whether an attack
+"hits" — none of that is part of the grammar. `/roll` prints a number; what it means is,
+as ever, up to the people at the table.
 
 ## Zones
 
-A named region with a visibility rule, used for hands, secret roles, and discard piles:
+A named region with a visibility rule, used for hands and discard piles:
 
 ```yaml
 zones:
   - key: my-hand
     visibility: owner-only        # per-player instance; only its owner sees contents
-  - key: traitors-tome
-    visibility: owner-only        # revealed to whoever holds the "traitor" role at runtime
   - key: discard
     visibility: public
 ```
 
+That's the whole feature: `public`, `owner-only` (per-player instance), or `owner+host`.
 A Zone's contents are only ever sent over the network to the peers allowed to see them
 (unicast to the owner, or kept host-side) — see NETWORKING.md. No encryption is needed
 for this: the design assumes cooperating players (this project's target is a private
@@ -205,74 +228,66 @@ group, not an adversarial one — see NETWORKING.md "Trust model"), so simply no
 broadcasting a Zone's contents to non-owners is sufficient, the same way a hidden role
 card face-down on the table is "secure" only because everyone agrees not to peek.
 
-## Phases, turn order, and triggers
+A Zone's `owner-only` visibility is this same mechanism formalized for a whole declared
+region — a single Card can get the identical treatment ad hoc, with **no Zone or game
+definition at all**, via the right-click **Hide** toggle every Card has (see
+ARCHITECTURE.md "Hiding a card"). This covers the common hidden-role case completely: a
+werewolf/Mafia role card or an Avalon character card is just a Card, dealt face-down,
+that its owner Hides — the player knows their own role because they looked at their own
+hidden card, the same way they would at a physical table. Anything beyond
+"know your own secret" (a physical Avalon table's ritual for evil players to learn who
+else is evil, or Merlin learning who's evil) is **not something the engine automates** —
+see "Why no rules layer?" below for why, and how the group handles it instead.
 
-```yaml
-phases:
-  - key: exploration
-    default: true
-    turn_order: round-robin(explorers)
-  - key: haunt
-    turn_order: sequence([round-robin(heroes), single(traitor), single(traitor.monsters)])
+### Chat commands
 
-triggers:
-  - when: enter-tile
-    if: "tile.symbol != null"
-    do: [draw: { set: "{{tile.symbol}}", to: table-faceup }]
-
-  - when: draw-card
-    if: "card.set == 'omen'"
-    do: [roll: { pool: "6d6", if_lte: omens_drawn_count, then: [trigger: haunt-roll-success] }]
-
-  - when: haunt-roll-success
-    do:
-      - switch-phase: haunt
-      - assign-role: { role: traitor, target: "lookup(haunt-chart, last_omen, current_room)" }
-      - reveal-zone: { zone: traitors-tome, to: role(traitor) }
-      - reveal-zone: { zone: secrets-of-survival, to: not(role(traitor)) }
-```
-
-The action vocabulary is intentionally small and fixed: `draw`, `roll`, `contest`,
-`move-token`, `set-track`, `switch-phase`, `assign-role`, `reveal-zone`. A trigger is
-`when` (an event the engine already emits: enter-tile, draw-card, roll-result, turn-start,
-...) + optional `if` (a boolean expression over visible state) + `do` (a list of those
-actions). This covers the mechanical bookkeeping a rulebook is full of; it does not try
-to cover a specific scenario's unique narrative logic (see below).
-
-## Worked example: enough of Betrayal at House on the Hill to prove the model
-
-This isn't a full implementation of all 50 haunts — see "Why not just script it?" — but
-it shows every one of Betrayal's unusual mechanics maps onto the primitives above with no
-new engine concepts:
-
-| Betrayal mechanic | How it maps |
+| Command | Effect |
 |---|---|
-| Custom pip dice, pool size = current stat | `dice: [{key: pip, faces: [0,0,0,1,1,2]}]` + `tracks[].pool_die: pip` |
-| Traits are a track you slide, with a death floor and item overflow | `tracks[].values`, `death_below_min: haunt`, `allow_overflow: true` |
-| Board built live from a tile stack, per floor | `pieces[].set: room-tile` with `tags: [floor:*]`; drawing = pulling the top tile off the (per-floor-filtered) draw pile and placing it, connector-to-connector; placed tiles never re-stack |
-| A floor can't be sealed off by a bad placement | `board.prevent_disconnection: true` — a generic board-graph rule, not Betrayal-specific |
-| Event/Item/Omen decks | Three `cards[].set` groups; each starts as a shuffled Stack; `draw` trigger action per entry symbol |
-| Haunt roll → mid-game rule change | `switch-phase` trigger action, changing `turn_order` for the rest of the game |
-| Traitor gets a secret rulebook | `reveal-zone` to `role(traitor)` only — a Zone the other players' clients never receive |
-| Opposed attack rolls | `contest(attacker_pool, defender_pool)` trigger action, difference = damage |
-| A specific haunt's unique win condition and special powers | **Not encoded as triggers.** The `reveal-zone` for that haunt's booklet page is just text — the traitor reads it and the group plays it out manually, exactly as the physical rulebook expects. The engine automates *getting the right secret to the right player at the right time*; it doesn't try to referee 50 bespoke scenarios. |
+| `/roll <expr>` (alias `/r`) | Evaluate the roll grammar above and post the result, attributed to the sender |
+| `/whisper <player> <text>` | A private message, visible only to sender + recipient |
+| plain text | An ordinary public chat message |
 
-## Why not just script it?
+## Why no rules layer?
 
-A general scripting layer (à la Tabletop Simulator's per-game Lua) could express
-Betrayal's full 50 haunts, but at a real cost: it's a sandboxing/security problem for
-uploaded, untrusted rulesets, and it's a huge surface to build and maintain for a benefit
-most games don't need. The alternative embraced here is the same one physical tabletop
-games already rely on: automate the *mechanical* bookkeeping (shuffle, draw, roll, track
-math, who-sees-what) and trust the players to read and apply the rest, the same way they
-would with a physical rulebook or a haunt booklet. Given the target use case is a
-cooperating private group (see NETWORKING.md "Trust model"), that's not a compromise
-forced by security — it's how these games are actually designed to be played. If a
-specific game later needs more automation than triggers can express, the escape hatch is
-a bigger trigger vocabulary (more built-in actions), not a general-purpose scripting
-language.
+An earlier version of this design had a `when X happens, do Y` trigger system, game
+phases, an engine-level notion of "roles," win-condition checks, and a way to compute
+"which other players does this player secretly know about." All of that got cut, and
+it's worth being explicit about why, since it's a meaningfully smaller scope than "a
+generic rules engine":
 
-## Example: minimal generic ruleset (`game-defs/generic-freeform.yaml`)
+**The goal was never to simulate any specific game — it's to let players move things
+around the way they would at a physical table.** A trigger system, however small and
+data-only, is still the engine developing an opinion about what a card's text means or
+what should happen next. That's a different (and much bigger, and ultimately
+unbounded) project from a tabletop's actual missing piece, which is just: *a shared
+surface, and physical-feeling objects on it that behave the way their real counterparts
+do.* Whose turn it is, what a card's printed text tells you to do, when the game ends,
+who's secretly the traitor and what they're allowed to do about it — a GM and a group of
+players already handle every bit of that at a physical table with zero digital help
+beyond the pieces themselves. Once cards can be moved/flipped/hidden/stacked, dice can be
+rolled, and stats can be tracked, the tool has already provided everything a physical
+table provides. Anything past that — the trigger vocabulary, phases, computed hidden-role
+knowledge — was solving a problem that only exists if the goal is automation, and it
+isn't.
+
+Concretely, this means a game like Avalon or Betrayal is fully playable with nothing
+this document describes beyond cards/dice/tracks/pieces/zones as plain content:
+
+- Dealing hidden roles = dealing Cards, each player Hides their own.
+- "Evil knows evil," "Merlin knows evil" = something the GM arranges by voice/DM/whatever
+  the group prefers, the same as the physical ritual (or more simply, since there's no
+  paper involved: the GM just tells the relevant players privately). The engine has no
+  idea any of this happened, and doesn't need to.
+- Turn order, phases, votes, win conditions = the group's own convention, same as always.
+- A haunt's special rules, a card's printed effect, an attack's outcome = read by a human,
+  applied by a human — tracks and dice are there so that applying it (sliding a stat,
+  rolling a pool) doesn't require physical props, not so the engine adjudicates it.
+
+The one place a *little* automation earns its keep without becoming a rules engine is
+letting a bare stat name expand into the right dice/formula in `/roll` (Tracks' `resolve_as`
+/`pool_die`) — that's arithmetic, not game logic, and it stays.
+
+## Example: minimal generic package (`game-defs/generic-freeform.yaml`)
 
 ```yaml
 name: "Generic Freeform"
@@ -283,9 +298,9 @@ dice:
 ```
 
 For rooms that just want a shared table, a couple of number tracks, and dice — no card
-sets, no triggers.
+sets at all.
 
-## Example: excerpt of a D&D 5e-flavored ruleset (`game-defs/dnd5e-srd.yaml`)
+## Example: excerpt of a D&D 5e-flavored package (`game-defs/dnd5e-srd.yaml`)
 
 ```yaml
 name: "D&D 5e (SRD)"
@@ -304,4 +319,60 @@ macros:
 ```
 
 This ships as a starting point, not a full SRD implementation — more skills/saves/spell
-slots are just more tracks/macros, no engine changes.
+slots are just more tracks/macros, no engine changes. A macro button is pure UI sugar:
+it fills in and runs a `/roll` string, nothing more.
+
+## Design-validation references (not shipped content)
+
+Two real, well-known games were used to pressure-test this scope — checking that "just
+give people physical-feeling pieces" is actually enough, without shipping either game's
+copyrighted text/art as real data in this repo:
+
+**Betrayal at House on the Hill** — a dynamically-built board, custom (non-d20) dice
+whose pool size comes from a stat, stat *tracks* rather than number+modifier, three
+separate card sets, and (in the physical game) a mid-game reveal that one player is a
+secret traitor with a private booklet. Every one of those is plain content in this
+format — custom `dice`, `tracks` with `pool_die`, three `cards` sets, `pieces` with
+`connectors` for the room tiles. The traitor reveal is just: the GM deals that player a
+face-down "Traitor" Card, which they Hide; the GM (or the traitor, reading their own
+booklet) tells the rest of the group what changes, exactly as the physical rulebook
+already expects a human to do.
+
+**The Resistance: Avalon** — up to seven roles with different, overlapping knowledge of
+each other (evil knows evil; Merlin knows evil except Mordred; Percival knows
+{Merlin, Morgana} but not which is which), and a physical ritual whose entire purpose is
+letting people learn secrets about *other* players safely without a computer. Dealing
+each player a hidden role Card they Hide covers "know your own role" completely. The
+cross-player knowledge (evil knowing evil, Merlin knowing evil) is exactly the part this
+engine deliberately does not automate — see "Why no rules layer?" above — and the group
+arranges it themselves (the GM tells the relevant players privately, which is strictly
+easier online than the physical ritual it replaces, not harder).
+
+**Coup** — the cleanest fit of the three, and a good check that the simplification holds:
+no board, no dice, just a deck of hidden Influence cards, a per-player coin count, and a
+bluffing/challenge layer that's pure conversation. Every mechanic is content the players
+operate manually, needing nothing new:
+
+- Two hidden Influence cards per player = two Cards dealt from a shuffled Stack, each
+  Hidden by its owner — the same primitive used for every other hidden hand.
+- Coins = an ordinary per-player Track (e.g. `values: [0..30]`). "Steal 2 coins" is just
+  the two players involved adjusting their own Tracks — Tracks aren't ownership-locked
+  any more than Cards are (see NETWORKING.md "Trust model"), so this needs no new
+  mechanism, the same as a thief and a mark each moving their own coin pile at a
+  physical table. (The physical game's shared bank running out is an edge case this
+  design doesn't model at all — not a gap, since enforcing scarcity is exactly the kind
+  of rule the engine isn't meant to referee; the group would just notice and handle it.)
+- Swapping influence with the deck (the Ambassador's action: draw 2, mix with your hand,
+  return 2, reshuffle) = draw 2 Cards from the Stack, Hide them into your existing hand,
+  pick which 2 of your 4 to keep, drop the other 2 back onto the Stack, `shuffle`. Exactly
+  the Stack operations already defined for every other deck.
+- Challenges, blocks, and losing a challenge (flip one of *your own* Influence cards
+  face-up, your choice) = ordinary chat plus un-hiding a Card you already own and were
+  already the only one able to see. No new mechanism, and no engine involvement in who's
+  bluffing or who wins a challenge — that's the entire game, and it's exactly the part
+  left to the humans, same as everything else in this document.
+- Win condition (only one player has any Influence left) = visible to everyone once
+  opponents' last cards are face-up; nothing to track.
+
+Like Betrayal and Avalon, Coup's specific character names, card art, and rules text are
+copyrighted, so this stays a design-validation note, not shipped content.
