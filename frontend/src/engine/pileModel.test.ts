@@ -16,7 +16,7 @@ describe("spawnCard", () => {
     const model = new TableModel();
     const pile = model.spawnCard(DEF_A, 10, 20);
 
-    expect(pile.cards).toEqual([{ def: DEF_A, faceUp: false, hidden: false }]);
+    expect(pile.cards).toEqual([{ def: DEF_A, faceUp: false, hiddenBy: null }]);
     expect(pile.x).toBe(10);
     expect(pile.y).toBe(20);
     expect(pile.rotation).toBe(0);
@@ -50,14 +50,14 @@ describe("pickUpTop", () => {
     const floating = model.pickUpTop(pile.id)!;
 
     expect(floating.id).toBe(pile.id);
-    expect(floating.cards).toEqual([{ def: DEF_A, faceUp: false, hidden: false }]);
+    expect(floating.cards).toEqual([{ def: DEF_A, faceUp: false, hiddenBy: null }]);
     expect(model.getPile(pile.id)).toBeUndefined();
   });
 
   it("picking up the top of a multi-card pile leaves the remainder in place under the same id", () => {
     const model = new TableModel();
     const pile = model.spawnCard(DEF_A, 0, 0);
-    pile.cards.push({ def: DEF_B, faceUp: false, hidden: false }); // B is now on top
+    pile.cards.push({ def: DEF_B, faceUp: false, hiddenBy: null }); // B is now on top
 
     const floating = model.pickUpTop(pile.id)!;
 
@@ -70,7 +70,7 @@ describe("pickUpTop", () => {
   it("the remainder pile keeps its original position when only the top card is taken", () => {
     const model = new TableModel();
     const pile = model.spawnCard(DEF_A, 42, 99);
-    pile.cards.push({ def: DEF_B, faceUp: false, hidden: false });
+    pile.cards.push({ def: DEF_B, faceUp: false, hiddenBy: null });
 
     model.pickUpTop(pile.id);
 
@@ -82,7 +82,7 @@ describe("pickUpTop", () => {
   it("the floating pile from a multi-card source starts at the source's position", () => {
     const model = new TableModel();
     const pile = model.spawnCard(DEF_A, 42, 99);
-    pile.cards.push({ def: DEF_B, faceUp: false, hidden: false });
+    pile.cards.push({ def: DEF_B, faceUp: false, hiddenBy: null });
 
     const floating = model.pickUpTop(pile.id)!;
 
@@ -133,7 +133,7 @@ describe("dropPile — the Stack-forming behavior", () => {
     const model = new TableModel();
     const target = model.spawnCard(DEF_A, 0, 0);
     const floating = model.pickUpTop(model.spawnCard(DEF_B, 900, 900).id)!;
-    floating.cards.push({ def: DEF_C, faceUp: false, hidden: false }); // pretend it carried 2
+    floating.cards.push({ def: DEF_C, faceUp: false, hiddenBy: null }); // pretend it carried 2
 
     model.dropPile(floating, 0, 0, 20);
 
@@ -168,7 +168,7 @@ describe("flip / toggleHide / rotate90 — act on the top card or whole pile onl
   it("flip toggles the top card's faceUp and leaves cards below it alone", () => {
     const model = new TableModel();
     const pile = model.spawnCard(DEF_A, 0, 0);
-    pile.cards.push({ def: DEF_B, faceUp: false, hidden: false });
+    pile.cards.push({ def: DEF_B, faceUp: false, hiddenBy: null });
 
     model.flip(pile.id);
 
@@ -183,13 +183,24 @@ describe("flip / toggleHide / rotate90 — act on the top card or whole pile onl
     expect(() => model.flip("ghost")).not.toThrow();
   });
 
-  it("toggleHide toggles only the top card's hidden flag", () => {
+  it("toggleHide sets hiddenBy to the calling peer", () => {
     const model = new TableModel();
     const pile = model.spawnCard(DEF_A, 0, 0);
-    model.toggleHide(pile.id);
-    expect(model.topCard(pile.id)!.hidden).toBe(true);
-    model.toggleHide(pile.id);
-    expect(model.topCard(pile.id)!.hidden).toBe(false);
+    model.toggleHide(pile.id, "peer-1");
+    expect(model.topCard(pile.id)!.hiddenBy).toBe("peer-1");
+  });
+
+  it("toggleHide un-hides a card already hidden by anyone, not just the caller", () => {
+    const model = new TableModel();
+    const pile = model.spawnCard(DEF_A, 0, 0);
+    model.toggleHide(pile.id, "peer-1");
+    model.toggleHide(pile.id, "peer-2"); // a different peer un-hides it — no ownership lock
+    expect(model.topCard(pile.id)!.hiddenBy).toBeNull();
+  });
+
+  it("toggleHide on a nonexistent pile does not throw", () => {
+    const model = new TableModel();
+    expect(() => model.toggleHide("ghost", "peer-1")).not.toThrow();
   });
 
   it("rotate90 accumulates by 90 degrees (in radians) and wraps at a full turn", () => {
@@ -247,8 +258,8 @@ describe("shuffle", () => {
   it("preserves the multiset of cards (same cards, some order)", () => {
     const model = new TableModel();
     const pile = model.spawnCard(DEF_A, 0, 0);
-    pile.cards.push({ def: DEF_B, faceUp: false, hidden: false });
-    pile.cards.push({ def: DEF_C, faceUp: false, hidden: false });
+    pile.cards.push({ def: DEF_B, faceUp: false, hiddenBy: null });
+    pile.cards.push({ def: DEF_C, faceUp: false, hiddenBy: null });
 
     model.shuffle(pile.id, () => 0); // degenerate RNG, still must not lose/duplicate cards
 
@@ -259,8 +270,8 @@ describe("shuffle", () => {
     const build = () => {
       const model = new TableModel();
       const pile = model.spawnCard(DEF_A, 0, 0);
-      pile.cards.push({ def: DEF_B, faceUp: false, hidden: false });
-      pile.cards.push({ def: DEF_C, faceUp: false, hidden: false });
+      pile.cards.push({ def: DEF_B, faceUp: false, hiddenBy: null });
+      pile.cards.push({ def: DEF_C, faceUp: false, hiddenBy: null });
       return { model, pile };
     };
     const sequence = [0.9, 0.1, 0.5];
@@ -293,7 +304,7 @@ describe("drawTop", () => {
   it("moves the top card into a brand-new pile offset from the source", () => {
     const model = new TableModel();
     const pile = model.spawnCard(DEF_A, 100, 100);
-    pile.cards.push({ def: DEF_B, faceUp: false, hidden: false });
+    pile.cards.push({ def: DEF_B, faceUp: false, hiddenBy: null });
 
     const drawn = model.drawTop(pile.id, 50, 0)!;
 
@@ -319,8 +330,8 @@ describe("drawTop", () => {
   it("repeated draws eventually reduce a pile to one card and then refuse further draws", () => {
     const model = new TableModel();
     const pile = model.spawnCard(DEF_A, 0, 0);
-    pile.cards.push({ def: DEF_B, faceUp: false, hidden: false });
-    pile.cards.push({ def: DEF_C, faceUp: false, hidden: false });
+    pile.cards.push({ def: DEF_B, faceUp: false, hiddenBy: null });
+    pile.cards.push({ def: DEF_C, faceUp: false, hiddenBy: null });
 
     expect(model.drawTop(pile.id, 1, 0)).toBeDefined();
     expect(pile.cards).toHaveLength(2);
@@ -350,17 +361,17 @@ describe("a realistic end-to-end scenario: deal, peek at own hand via hide, disc
   it("behaves consistently through a full sequence of operations", () => {
     const model = new TableModel();
     const deck = model.spawnCard(DEF_A, 0, 0);
-    deck.cards.push({ def: DEF_B, faceUp: false, hidden: false });
-    deck.cards.push({ def: DEF_C, faceUp: false, hidden: false });
+    deck.cards.push({ def: DEF_B, faceUp: false, hiddenBy: null });
+    deck.cards.push({ def: DEF_C, faceUp: false, hiddenBy: null });
 
     // Deal one card to "my hand" by drawing it off the deck.
     const hand = model.drawTop(deck.id, 200, 0)!;
     expect(deck.cards).toHaveLength(2);
 
     // I look at my own card (Hide keeps the front visible only to me — see
-    // docs/ARCHITECTURE.md "Hiding a card"; this model just tracks the flag).
-    model.toggleHide(hand.id);
-    expect(model.topCard(hand.id)!.hidden).toBe(true);
+    // docs/ARCHITECTURE.md "Hiding a card"; this model just tracks who hid it).
+    model.toggleHide(hand.id, "me");
+    expect(model.topCard(hand.id)!.hiddenBy).toBe("me");
 
     // I discard it back onto the deck (pick it up, drop it near the deck to merge).
     const floating = model.pickUpTop(hand.id)!;
@@ -369,6 +380,6 @@ describe("a realistic end-to-end scenario: deal, peek at own hand via hide, disc
     expect(deck.cards).toHaveLength(3);
     // the re-merged card keeps whatever hidden/faceUp state it had — merging doesn't
     // reset a card, only stacking position does
-    expect(deck.cards[2].hidden).toBe(true);
+    expect(deck.cards[2].hiddenBy).toBe("me");
   });
 });

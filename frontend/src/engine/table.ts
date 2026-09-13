@@ -34,6 +34,12 @@ export class TableApp {
   private app = new Application();
   private world = new Container();
   private model = new TableModel();
+  /** Who's viewing this table — needed to render Hide correctly (see
+   * docs/ARCHITECTURE.md "Hiding a card"): only this peer sees the true front of
+   * anything it hid itself. Defaults to a local-only placeholder until the room
+   * assigns a real one (net/signaling.ts's `welcome`); a single-tab sandbox with no
+   * room never needs to change it. */
+  private selfPeerId = "local";
   private views = new Map<string, Container>();
   private faceLayers = new Map<string, Container>();
   private dragging: { pile: PileState; view: Container } | null = null;
@@ -88,6 +94,15 @@ export class TableApp {
     window.removeEventListener("keydown", this.onKeyDown);
     window.removeEventListener("keyup", this.onKeyUp);
     this.app.destroy(true, { children: true });
+  }
+
+  /** Set once the room assigns this tab a real peerId (net/signaling.ts's `welcome`).
+   * Re-renders everything currently on the table so any already-hidden card this peer
+   * owns (or doesn't) reflects the right viewer immediately, rather than waiting for
+   * its next unrelated redraw. */
+  setSelfPeerId(peerId: string): void {
+    this.selfPeerId = peerId;
+    for (const pileId of this.views.keys()) this.redraw(pileId);
   }
 
   // --- Camera: WASD pan, Q/E rotate (engine/camera.ts does the actual math) ---
@@ -247,7 +262,7 @@ export class TableApp {
     const faceLayer = this.faceLayers.get(pileId);
     if (!pile || !faceLayer) return;
     const top = pile.cards[pile.cards.length - 1];
-    renderCard(faceLayer, top.def, top.faceUp, top.hidden, pile.cards.length);
+    renderCard(faceLayer, top.def, top.faceUp, top.hiddenBy, this.selfPeerId, pile.cards.length);
   }
 
   private removeView(pileId: string): void {
@@ -364,7 +379,7 @@ export class TableApp {
 
     const items: [string, () => void][] = [
       ["Flip", () => { this.model.flip(pileId); this.redraw(pileId); }],
-      [top.hidden ? "Unhide" : "Hide", () => { this.model.toggleHide(pileId); this.redraw(pileId); }],
+      [top.hiddenBy !== null ? "Unhide" : "Hide", () => { this.model.toggleHide(pileId, this.selfPeerId); this.redraw(pileId); }],
       ["Rotate 90°", () => this.rotate90(pileId)],
     ];
     if (pile.cards.length > 1) {

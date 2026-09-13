@@ -26,14 +26,20 @@ export interface CardDisplay {
 }
 
 /** The pure decision behind a card's appearance — no PixiJS involved, so this is
- * exhaustively unit-testable on its own. Hidden takes precedence over faceUp: a hidden
- * card always shows you its front (that's the point of hiding it — see
- * docs/ARCHITECTURE.md "Hiding a card"), regardless of whether it's "face up" per its
- * own flip state. In this single-tab sandbox (ahead of the P2P sync in M6) there's no
- * "other player" to show the back to instead; once that lands, only the hider's own
- * client would take the `hidden` branch at all. */
-export function resolveDisplay(def: CardDef, faceUp: boolean, hidden: boolean): CardDisplay {
-  if (hidden) return { face: def.front, eyeBadge: true };
+ * exhaustively unit-testable on its own. `hiddenBy` is the peerId of whoever hid the
+ * card, or null if no one has. For the hider, hidden takes precedence over faceUp — a
+ * hidden card always shows *them* its front (that's the point of hiding it — see
+ * docs/ARCHITECTURE.md "Hiding a card"), regardless of the card's own flip state. Every
+ * other viewer sees the back, also regardless of faceUp, exactly as if it were face-down
+ * — this is what makes Hide correct once state is actually synced across peers (M6):
+ * the host only ever sends the true front content to the hider (see
+ * net/syncProtocol.ts's redaction), so a non-owner's client typically never even
+ * *has* the real front to accidentally render — this function just encodes the same
+ * rule for the hider's own client, which does have it. */
+export function resolveDisplay(def: CardDef, faceUp: boolean, hiddenBy: string | null, viewerPeerId: string): CardDisplay {
+  if (hiddenBy !== null) {
+    return hiddenBy === viewerPeerId ? { face: def.front, eyeBadge: true } : { face: def.back, eyeBadge: false };
+  }
   return { face: faceUp ? def.front : def.back, eyeBadge: false };
 }
 
@@ -77,8 +83,8 @@ function drawFace(container: Container, face: CardFace, badge?: string): void {
 }
 
 /** Draw a card's current appearance into `container`, per resolveDisplay() above. */
-export function renderCard(container: Container, def: CardDef, faceUp: boolean, hidden: boolean, pileCount: number): void {
-  const { face, eyeBadge } = resolveDisplay(def, faceUp, hidden);
+export function renderCard(container: Container, def: CardDef, faceUp: boolean, hiddenBy: string | null, viewerPeerId: string, pileCount: number): void {
+  const { face, eyeBadge } = resolveDisplay(def, faceUp, hiddenBy, viewerPeerId);
   const badge = eyeBadge ? "\u{1F441}" : pileCount > 1 ? String(pileCount) : undefined;
   drawFace(container, face, badge);
 }

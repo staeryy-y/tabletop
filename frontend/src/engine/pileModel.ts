@@ -11,7 +11,11 @@ import { CardDef } from "./card";
 export interface CardInstance {
   def: CardDef;
   faceUp: boolean;
-  hidden: boolean;
+  /** The peerId of whoever hid this card, or null if it isn't hidden. Tracking *who*
+   * (not just a boolean) is what makes Hide correct once state is actually synced
+   * across peers (M6): the host needs to know who to send the true front content to —
+   * see docs/ARCHITECTURE.md "Hiding a card" and net/syncProtocol.ts's redaction. */
+  hiddenBy: string | null;
 }
 
 export interface PileState {
@@ -33,7 +37,7 @@ export class TableModel {
   }
 
   spawnCard(def: CardDef, x: number, y: number): PileState {
-    const pile: PileState = { id: this.newId(), x, y, rotation: 0, cards: [{ def, faceUp: false, hidden: false }] };
+    const pile: PileState = { id: this.newId(), x, y, rotation: 0, cards: [{ def, faceUp: false, hiddenBy: null }] };
     this.piles.set(pile.id, pile);
     return pile;
   }
@@ -48,6 +52,25 @@ export class TableModel {
 
   removePile(id: string): void {
     this.piles.delete(id);
+  }
+
+  /** Insert or overwrite a pile *by the id it already carries*, without allocating a
+   * new one — this is how a peer mirrors a pile the host broadcast (see
+   * net/syncProtocol.ts): only the host's TableModel ever calls the id-allocating
+   * methods above (spawnCard, pickUpTop, drawTop); every other peer's local mirror only
+   * ever receives complete PileState objects through this method, so ids never collide
+   * across peers. */
+  setPile(pile: PileState): void {
+    this.piles.set(pile.id, pile);
+  }
+
+  /** Replace this model's entire contents — used to apply a full snapshot, e.g. when a
+   * newly-promoted host resumes from the last one uploaded (see
+   * docs/NETWORKING.md "Host migration") or a joining peer receives the current table
+   * state. */
+  loadSnapshot(piles: PileState[]): void {
+    this.piles.clear();
+    for (const pile of piles) this.piles.set(pile.id, pile);
   }
 
   topCard(id: string): CardInstance | undefined {
@@ -110,9 +133,13 @@ export class TableModel {
     if (top) top.faceUp = !top.faceUp;
   }
 
-  toggleHide(pileId: string): void {
+  /** Toggle hiding the top card. Consistent with the no-ownership-lock trust model
+   * (see docs/NETWORKING.md "Trust model"), anyone can call this on anyone's hidden
+   * card — hiding it if it's currently visible (as themselves), or un-hiding it if it's
+   * currently hidden by anyone at all, not just by the caller. */
+  toggleHide(pileId: string, peerId: string): void {
     const top = this.topCard(pileId);
-    if (top) top.hidden = !top.hidden;
+    if (top) top.hiddenBy = top.hiddenBy === null ? peerId : null;
   }
 
   /** Rotate by an arbitrary angle (radians, either sign) — the general case, e.g. for
