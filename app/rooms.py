@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import secrets
+import sqlite3
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -59,26 +60,34 @@ def get_room_by_slug(slug: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
+MAX_SLUG_COLLISION_RETRIES = 5
+
+
 @router.post("/api/rooms", status_code=status.HTTP_201_CREATED)
 def create_room(body: CreateRoomBody, user: dict = Depends(auth.require_admin)):
     name = body.name.strip()
     if not name:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "name required")
-    slug = new_slug()
-    with connection() as conn:
-        conn.execute(
-            "INSERT INTO rooms (slug, name, owner_user_id, game_def_ref, password_hash, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                slug,
-                name,
-                user["id"],
-                body.game_def_ref,
-                hash_password(body.password) if body.password else None,
-                now_iso(),
-            ),
-        )
-    return {"slug": slug}
+    password_hash = hash_password(body.password) if body.password else None
+
+    # new_slug() is random and, vanishingly rarely, could collide with an existing
+    # room — sqlite's UNIQUE constraint on rooms.slug is what actually prevents two
+    # rooms sharing one, but a collision should retry with a fresh slug rather than
+    # surface a raw IntegrityError as a 500.
+    for attempt in range(MAX_SLUG_COLLISION_RETRIES):
+        slug = new_slug()
+        try:
+            with connection() as conn:
+                conn.execute(
+                    "INSERT INTO rooms (slug, name, owner_user_id, game_def_ref, password_hash, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (slug, name, user["id"], body.game_def_ref, password_hash, now_iso()),
+                )
+            return {"slug": slug}
+        except sqlite3.IntegrityError:
+            if attempt == MAX_SLUG_COLLISION_RETRIES - 1:
+                raise
+            continue
 
 
 @router.get("/api/rooms")

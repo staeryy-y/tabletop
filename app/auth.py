@@ -7,6 +7,7 @@ app/rooms.py — and never touches this module.
 """
 from __future__ import annotations
 
+import os
 import secrets
 from pathlib import Path
 from typing import Optional
@@ -16,7 +17,10 @@ from fastapi import HTTPException, Request, status
 
 from app.db import connection, now_iso
 
-SECRET_KEY_PATH = Path(__file__).resolve().parent.parent / "data" / ".secret_key"
+# See app/db.py's DATA_DIR for why this honors the same env var override.
+SECRET_KEY_PATH = (
+    Path(os.environ.get("RPG_TABLETOP_DATA_DIR") or Path(__file__).resolve().parent.parent / "data") / ".secret_key"
+)
 
 
 def get_or_create_secret_key() -> str:

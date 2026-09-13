@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -15,10 +16,18 @@ from app.signaling import router as signaling_router
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-app = FastAPI(title="rpg-tabletop")
-app.add_middleware(SessionMiddleware, secret_key=get_or_create_secret_key(), same_site="lax")
 
-init_db()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Deliberately not run at import time: tests construct this app once per process
+    # but want init_db() to run against a fresh, per-test data directory (see
+    # tests/conftest.py) — a startup hook, not a module-level call, makes that possible.
+    init_db()
+    yield
+
+
+app = FastAPI(title="rpg-tabletop", lifespan=lifespan)
+app.add_middleware(SessionMiddleware, secret_key=get_or_create_secret_key(), same_site="lax")
 
 app.include_router(auth_router)
 app.include_router(users_router)

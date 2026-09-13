@@ -1,35 +1,24 @@
-// The shared table: pan/zoom, and the Card/Stack object model from
-// docs/ARCHITECTURE.md "Object model" / docs/GAME_DEFINITION.md "Cards are the
-// workhorse". A "Pile" here is the implementation of both a standalone Card (a pile of
-// one) and a Stack (a pile of more than one) — per the docs, a Stack isn't an authored
-// type, it's what a pile of Cards becomes, so one data structure covers both.
+// The shared table: pan/zoom, and PixiJS rendering/pointer-event handling over the pure
+// game logic in pileModel.ts. This file deliberately holds *no* game rules of its own —
+// merge distance aside, everything about what a drag/flip/hide/shuffle/draw actually
+// does lives in TableModel, which is unit-tested directly (pileModel.test.ts) without
+// needing PixiJS, a canvas, or WebGL at all.
 //
 // This is the M3 milestone (docs/PLAN.md): the sandbox works entirely locally in this
 // tab for now. Syncing it P2P over WebRTC (and the WS-relay fallback) is M6 and isn't
 // wired up here yet — see net/signaling.ts.
 import { Application, Container, FederatedPointerEvent } from "pixi.js";
-import { CARD_HEIGHT, CARD_WIDTH, CardDef, renderCard } from "./card";
-
-interface CardInstance {
-  def: CardDef;
-  faceUp: boolean;
-  hidden: boolean;
-}
-
-interface Pile {
-  id: string;
-  view: Container;
-  cards: CardInstance[]; // last element is the top of the pile
-}
+import { CARD_WIDTH, CardDef, renderCard } from "./card";
+import { PileState, TableModel } from "./pileModel";
 
 const MERGE_RADIUS = CARD_WIDTH * 0.6;
-let nextId = 1;
 
 export class TableApp {
   private app = new Application();
   private world = new Container();
-  private piles = new Map<string, Pile>();
-  private dragging: { pile: Pile; pointerId: number } | null = null;
+  private model = new TableModel();
+  private views = new Map<string, Container>();
+  private dragging: { pile: PileState; view: Container } | null = null;
   private panning = false;
   private menuEl: HTMLDivElement | null = null;
 
@@ -54,10 +43,6 @@ export class TableApp {
     });
   }
 
-  get canvasParent(): HTMLElement {
-    return this.app.canvas.parentElement!;
-  }
-
   destroy(): void {
     this.closeMenu();
     this.app.destroy(true, { children: true });
@@ -66,60 +51,75 @@ export class TableApp {
   /** Spawn a brand-new standalone pile (a GM-only action per the object model — see
    * docs/ARCHITECTURE.md "Roles: GM vs. players"; this demo doesn't gate it yet). */
   spawnCard(def: CardDef, worldX: number, worldY: number): void {
-    const pile: Pile = { id: `pile-${nextId++}`, view: new Container(), cards: [{ def, faceUp: false, hidden: false }] };
-    pile.view.position.set(worldX, worldY);
-    this.setUpPileInteraction(pile);
-    this.world.addChild(pile.view);
-    this.piles.set(pile.id, pile);
-    this.redraw(pile);
+    const pile = this.model.spawnCard(def, worldX, worldY);
+    this.mountView(pile);
   }
 
-  private setUpPileInteraction(pile: Pile): void {
-    pile.view.eventMode = "static";
-    pile.view.cursor = "grab";
-    pile.view.on("pointerdown", (e: FederatedPointerEvent) => {
+  // --- Wiring a PileState to an on-screen Container. The view is purely a rendering
+  // of whatever the model says; every handler below reads/writes the model first and
+  // re-renders after, never the other way around. ---
+
+  private mountView(pile: PileState): Container {
+    const view = new Container();
+    view.position.set(pile.x, pile.y);
+    view.rotation = pile.rotation;
+    view.eventMode = "static";
+    view.cursor = "grab";
+    view.on("pointerdown", (e: FederatedPointerEvent) => {
       e.stopPropagation();
       if (e.button === 2) return; // handled by rightclick below
-      this.beginDrag(pile, e);
+      this.beginDrag(pile.id, e);
     });
-    pile.view.on("rightclick", (e: FederatedPointerEvent) => {
+    view.on("rightclick", (e: FederatedPointerEvent) => {
       e.stopPropagation();
-      this.openMenu(pile, e.globalX, e.globalY);
+      this.openMenu(pile.id, e.globalX, e.globalY);
     });
-    pile.view.on("dblclick", (e: FederatedPointerEvent) => {
+    view.on("dblclick", (e: FederatedPointerEvent) => {
       e.stopPropagation();
-      this.flip(pile);
+      this.model.flip(pile.id);
+      this.redraw(pile.id);
     });
+    this.world.addChild(view);
+    this.views.set(pile.id, view);
+    this.redraw(pile.id);
+    return view;
   }
 
-  private redraw(pile: Pile): void {
+  private redraw(pileId: string): void {
+    const pile = this.model.getPile(pileId);
+    const view = this.views.get(pileId);
+    if (!pile || !view) return;
     const top = pile.cards[pile.cards.length - 1];
-    renderCard(pile.view, top.def, top.faceUp, top.hidden, pile.cards.length);
+    renderCard(view, top.def, top.faceUp, top.hidden, pile.cards.length);
   }
 
-  // --- Dragging: pick up just the top card as its own pile; dropping near another
-  // pile merges into it (the Stack behavior), otherwise it becomes a new standalone
-  // pile wherever it was dropped. ---
-
-  private beginDrag(sourcePile: Pile, e: FederatedPointerEvent): void {
-    if (this.dragging) return;
-    const top = sourcePile.cards.pop()!;
-    let dragPile: Pile;
-    if (sourcePile.cards.length === 0) {
-      this.piles.delete(sourcePile.id);
-      dragPile = sourcePile;
-      dragPile.cards = [top];
-    } else {
-      this.redraw(sourcePile);
-      dragPile = { id: `pile-${nextId++}`, view: new Container(), cards: [top] };
-      dragPile.view.position.copyFrom(sourcePile.view.position);
-      this.setUpPileInteraction(dragPile);
-      this.world.addChild(dragPile.view);
+  private removeView(pileId: string): void {
+    const view = this.views.get(pileId);
+    if (view) {
+      this.world.removeChild(view);
+      this.views.delete(pileId);
     }
-    this.redraw(dragPile);
-    dragPile.view.alpha = 0.85;
-    dragPile.view.zIndex = 1000;
-    this.dragging = { pile: dragPile, pointerId: e.pointerId };
+  }
+
+  // --- Dragging ---
+
+  private beginDrag(pileId: string, e: FederatedPointerEvent): void {
+    if (this.dragging) return;
+    const floating = this.model.pickUpTop(pileId);
+    if (!floating) return;
+
+    const sourceView = this.views.get(pileId);
+    if (floating.id === pileId) {
+      // The whole pile was picked up (it only had one card) — reuse its existing view.
+      this.dragging = { pile: floating, view: sourceView! };
+    } else {
+      // Only the top card came off; the remainder pile stays put under its own view.
+      if (sourceView) this.redraw(pileId);
+      const view = this.mountView(floating);
+      this.dragging = { pile: floating, view };
+    }
+    this.dragging.view.alpha = 0.85;
+    this.dragging.view.zIndex = 1000;
   }
 
   private onBackgroundPointerDown(e: FederatedPointerEvent): void {
@@ -129,7 +129,9 @@ export class TableApp {
   private onPointerMove(e: FederatedPointerEvent): void {
     if (this.dragging) {
       const local = this.world.toLocal(e.global);
-      this.dragging.pile.view.position.set(local.x, local.y);
+      this.dragging.pile.x = local.x;
+      this.dragging.pile.y = local.y;
+      this.dragging.view.position.set(local.x, local.y);
     } else if (this.panning) {
       this.world.position.x += e.movementX;
       this.world.position.y += e.movementY;
@@ -139,34 +141,18 @@ export class TableApp {
   private onPointerUp(): void {
     this.panning = false;
     if (!this.dragging) return;
-    const dragPile = this.dragging.pile;
+    const { pile, view } = this.dragging;
     this.dragging = null;
-    dragPile.view.alpha = 1;
+    view.alpha = 1;
 
-    const target = this.findMergeTarget(dragPile);
-    if (target) {
-      target.cards.push(...dragPile.cards);
-      this.world.removeChild(dragPile.view);
-      this.redraw(target);
+    const result = this.model.dropPile(pile, pile.x, pile.y, MERGE_RADIUS);
+    if (result.kind === "merged") {
+      this.removeView(pile.id);
+      this.redraw(result.targetId);
     } else {
-      this.piles.set(dragPile.id, dragPile);
+      this.views.set(pile.id, view);
+      this.redraw(pile.id);
     }
-  }
-
-  private findMergeTarget(dragPile: Pile): Pile | null {
-    let best: Pile | null = null;
-    let bestDist = MERGE_RADIUS;
-    for (const pile of this.piles.values()) {
-      if (pile === dragPile) continue;
-      const dx = pile.view.position.x - dragPile.view.position.x;
-      const dy = pile.view.position.y - dragPile.view.position.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist < bestDist) {
-        best = pile;
-        bestDist = dist;
-      }
-    }
-    return best;
   }
 
   private onWheel(e: WheelEvent): void {
@@ -176,67 +162,50 @@ export class TableApp {
     this.world.scale.set(newScale);
   }
 
-  // --- Per-card/pile actions, available from the right-click menu. See
+  // --- Per-pile actions, available from the right-click menu. See
   // docs/NETWORKING.md "Trust model": any player can do any of these to any pile —
   // there's no ownership lock, matching a physical table. ---
 
-  private flip(pile: Pile): void {
-    const top = pile.cards[pile.cards.length - 1];
-    top.faceUp = !top.faceUp;
-    this.redraw(pile);
+  private rotate90(pileId: string): void {
+    this.model.rotate90(pileId);
+    const pile = this.model.getPile(pileId);
+    const view = this.views.get(pileId);
+    if (pile && view) view.rotation = pile.rotation;
   }
 
-  private toggleHide(pile: Pile): void {
-    const top = pile.cards[pile.cards.length - 1];
-    top.hidden = !top.hidden;
-    this.redraw(pile);
+  private shuffle(pileId: string): void {
+    this.model.shuffle(pileId);
+    this.redraw(pileId);
   }
 
-  private rotate90(pile: Pile): void {
-    pile.view.rotation += Math.PI / 2;
-  }
-
-  private shuffle(pile: Pile): void {
-    // Resolved locally for now; once P2P lands (M6) this becomes a host-resolved
-    // operation so every peer agrees on the same resulting order — see
-    // docs/GAME_DEFINITION.md "Stack operations".
-    for (let i = pile.cards.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [pile.cards[i], pile.cards[j]] = [pile.cards[j], pile.cards[i]];
-    }
-    this.redraw(pile);
-  }
-
-  private draw(pile: Pile): void {
-    if (pile.cards.length <= 1) return;
-    const card = pile.cards.pop()!;
-    this.redraw(pile);
-    const drawn: Pile = { id: `pile-${nextId++}`, view: new Container(), cards: [card] };
-    drawn.view.position.set(pile.view.position.x + CARD_WIDTH * 0.7, pile.view.position.y);
-    this.setUpPileInteraction(drawn);
-    this.world.addChild(drawn.view);
-    this.piles.set(drawn.id, drawn);
-    this.redraw(drawn);
+  private drawTopCard(pileId: string): void {
+    const drawn = this.model.drawTop(pileId, CARD_WIDTH * 0.7, 0);
+    if (!drawn) return;
+    this.redraw(pileId);
+    this.mountView(drawn);
   }
 
   // --- A minimal right-click menu, plain DOM overlay (not part of the PixiJS scene). ---
 
-  private openMenu(pile: Pile, screenX: number, screenY: number): void {
+  private openMenu(pileId: string, screenX: number, screenY: number): void {
     this.closeMenu();
-    const top = pile.cards[pile.cards.length - 1];
+    const top = this.model.topCard(pileId);
+    if (!top) return;
+    const pile = this.model.getPile(pileId)!;
+
     const menu = document.createElement("div");
     menu.className = "card-menu";
     menu.style.left = `${screenX}px`;
     menu.style.top = `${screenY}px`;
 
     const items: [string, () => void][] = [
-      ["Flip", () => this.flip(pile)],
-      [top.hidden ? "Unhide" : "Hide", () => this.toggleHide(pile)],
-      ["Rotate 90°", () => this.rotate90(pile)],
+      ["Flip", () => { this.model.flip(pileId); this.redraw(pileId); }],
+      [top.hidden ? "Unhide" : "Hide", () => { this.model.toggleHide(pileId); this.redraw(pileId); }],
+      ["Rotate 90°", () => this.rotate90(pileId)],
     ];
     if (pile.cards.length > 1) {
-      items.push(["Shuffle", () => this.shuffle(pile)]);
-      items.push(["Draw top card", () => this.draw(pile)]);
+      items.push(["Shuffle", () => this.shuffle(pileId)]);
+      items.push(["Draw top card", () => this.drawTopCard(pileId)]);
     }
 
     for (const [label, action] of items) {

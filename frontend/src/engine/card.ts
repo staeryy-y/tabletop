@@ -20,6 +20,23 @@ export interface CardDef {
   back: CardFace;
 }
 
+export interface CardDisplay {
+  face: CardFace;
+  eyeBadge: boolean;
+}
+
+/** The pure decision behind a card's appearance — no PixiJS involved, so this is
+ * exhaustively unit-testable on its own. Hidden takes precedence over faceUp: a hidden
+ * card always shows you its front (that's the point of hiding it — see
+ * docs/ARCHITECTURE.md "Hiding a card"), regardless of whether it's "face up" per its
+ * own flip state. In this single-tab sandbox (ahead of the P2P sync in M6) there's no
+ * "other player" to show the back to instead; once that lands, only the hider's own
+ * client would take the `hidden` branch at all. */
+export function resolveDisplay(def: CardDef, faceUp: boolean, hidden: boolean): CardDisplay {
+  if (hidden) return { face: def.front, eyeBadge: true };
+  return { face: faceUp ? def.front : def.back, eyeBadge: false };
+}
+
 function drawFace(container: Container, face: CardFace, badge?: string): void {
   container.removeChildren();
 
@@ -59,19 +76,9 @@ function drawFace(container: Container, face: CardFace, badge?: string): void {
   }
 }
 
-/** Render a card's current appearance: face-up shows the front, face-down the back —
- * except when hidden, which (in this single-tab sandbox, ahead of the P2P sync in M6)
- * always shows you the front plus an eye badge, since there's no "other player" to hide
- * it from yet. Once M6 lands, only the hider's own client would take this branch; every
- * other peer would render the back regardless of hidden/faceUp state — see
- * docs/ARCHITECTURE.md "Hiding a card". */
+/** Draw a card's current appearance into `container`, per resolveDisplay() above. */
 export function renderCard(container: Container, def: CardDef, faceUp: boolean, hidden: boolean, pileCount: number): void {
-  const badge = pileCount > 1 ? String(pileCount) : undefined;
-  if (hidden) {
-    drawFace(container, def.front, "\u{1F441}"); // eye
-  } else if (faceUp) {
-    drawFace(container, def.front, badge);
-  } else {
-    drawFace(container, def.back, badge);
-  }
+  const { face, eyeBadge } = resolveDisplay(def, faceUp, hidden);
+  const badge = eyeBadge ? "\u{1F441}" : pileCount > 1 ? String(pileCount) : undefined;
+  drawFace(container, face, badge);
 }

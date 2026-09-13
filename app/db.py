@@ -4,6 +4,7 @@ game state, no rulesets, no assets live here (see docs/DECISIONS.md D14).
 """
 from __future__ import annotations
 
+import os
 import secrets
 import sqlite3
 from contextlib import contextmanager
@@ -11,7 +12,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+# Overridable via RPG_TABLETOP_DATA_DIR — mainly so tests can point this at a fresh temp
+# directory per test (see tests/conftest.py) without ever touching the real project's
+# data/. Also lets an operator relocate persistent state without editing code.
+DATA_DIR = Path(os.environ.get("RPG_TABLETOP_DATA_DIR") or Path(__file__).resolve().parent.parent / "data")
 DB_PATH = DATA_DIR / "db.sqlite3"
 
 SCHEMA = """
@@ -74,5 +78,12 @@ def init_db() -> None:
 
 
 def new_slug() -> str:
-    """A short, URL-safe, unguessable room slug."""
-    return secrets.token_urlsafe(6).replace("_", "").replace("-", "")[:8].lower()
+    """A short, URL-safe, unguessable room slug.
+
+    Fixed-length lowercase hex rather than token_urlsafe: base64url's alphabet is
+    case-sensitive (A-Z and a-z are distinct symbols), so lowercasing it — an earlier
+    version of this function did — silently halved its effective entropy and made the
+    output length variable (stripping `-`/`_` after the fact could shorten it). Hex has
+    no such trap and needs no post-processing.
+    """
+    return secrets.token_hex(5)  # 10 lowercase hex chars, 16**10 ≈ 1.1e12 possibilities
