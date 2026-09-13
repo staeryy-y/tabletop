@@ -1,10 +1,9 @@
 # A minimal game package — see docs/GAME_DEFINITION.md. Content only: no rules, no
 # triggers, no phases. A room with this loaded is a shared table, a couple of number
 # tracks, and dice; everything else is the freeform sandbox already in ARCHITECTURE.md.
+# Standard numeric dice (1d20, 8d6, ...) are always implicit — no dice: entry needed;
+# see GAME_DEFINITION.md's Dice section.
 name: "Generic Freeform"
 tracks:
   - { key: bonus1, label: "Bonus 1", values: [0, 1, 2, 3, 4, 5] }
   - { key: bonus2, label: "Bonus 2", values: [0, 1, 2, 3, 4, 5] }
-dice:
-  - { key: d20, sides: 20 }
-  - { key: d6, sides: 6 }

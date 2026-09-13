@@ -10,11 +10,13 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "js-yaml": "^4.1.0",
     "pixi.js": "^8.6.6",
     "preact": "^10.24.3"
   },
   "devDependencies": {
     "@preact/preset-vite": "^2.9.3",
+    "@types/js-yaml": "^4.0.9",
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^25.0.1",
     "typescript": "^5.6.3",

@@ -135,14 +135,17 @@ tokens:
 
 ## Dice
 
-A die is just a named face list — not limited to d4/d6/d20:
+A die is just a named face list — not limited to d4/d6/d20. A standard numeric die
+(`1d20`, `8d6`, ...) needs no entry here at all: in the roll grammar below, a numeric
+die-key is always an implicit standard die (faces `1..N`), the same way dice notation
+works everywhere else. This section is for dice a standard number can't express —
+Betrayal's non-numeric pip die, a Fate die with negative faces, or overriding a
+distribution:
 
 ```yaml
 dice:
   - key: pip                       # a custom die: 3 blank faces, 2 one-dot, 1 two-dot
     faces: [0, 0, 0, 1, 1, 2]
-  - key: d6
-    sides: 6                       # shorthand for faces: [1..6]
   - key: fate
     faces: [-1, -1, 0, 0, 1, 1]
 ```
@@ -164,15 +167,21 @@ stat clip or a counter dial:
 tracks:
   - key: dex
     label: Dexterity
-    values: [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    values: "8..20"                  # an inclusive range shorthand — see below
     resolve_as: "floor((value - 10) / 2)"   # bare `dex` in a roll → the modifier
     # `.raw` accessor (dex.raw) still gets the score itself
   - key: might
     label: Might
-    values: [1, 2, 3, 4, 5]
+    values: [1, 2, 3, 4, 5]           # or spell it out — either form works
     pool_die: pip                   # bare `might` in a roll → roll `values[current]`
                                      # dice of type `pip`, aggregator `sum`
 ```
+
+`values` is either an explicit array, or the quoted string `"start..end"` for a
+consecutive-integer range — plain YAML/JSON has no native range syntax (`[8..20]`
+*without* quotes isn't valid: it parses as one array element, the literal string
+`"8..20"`, not an actual range), so this needs to be a string specifically, not a new
+bracket notation.
 
 A Track just clamps to its declared range, the way a physical slider can't move past its
 printed ends — it has no opinion on what hitting either end *means* for the game (death,
@@ -293,26 +302,22 @@ letting a bare stat name expand into the right dice/formula in `/roll` (Tracks' 
 name: "Generic Freeform"
 tracks:
   - { key: bonus1, label: "Bonus 1", values: [0,1,2,3,4,5] }
-dice:
-  - { key: d20, sides: 20 }
 ```
 
-For rooms that just want a shared table, a couple of number tracks, and dice — no card
-sets at all.
+For rooms that just want a shared table, a couple of number tracks, and `/roll 1d20`-style
+dice (any standard numeric die is implicit — no `dice:` entry needed) — no card sets at all.
 
 ## Example: excerpt of a D&D 5e-flavored package (`game-defs/dnd5e-srd.yaml`)
 
 ```yaml
 name: "D&D 5e (SRD)"
 tracks:
-  - { key: str, label: Strength, values: [8..20], resolve_as: "floor((value-10)/2)" }
-  - { key: dex, label: Dexterity, values: [8..20], resolve_as: "floor((value-10)/2)" }
-  - { key: level, label: Level, values: [1..20] }
+  - { key: str, label: Strength, values: "8..20", resolve_as: "floor((value-10)/2)" }
+  - { key: dex, label: Dexterity, values: "8..20", resolve_as: "floor((value-10)/2)" }
+  - { key: level, label: Level, values: "1..20" }
   - key: proficiency
     label: "Proficiency Bonus"
     formula: "ceil(level.raw / 4) + 1"   # a derived, non-slidable track
-dice:
-  - { key: d20, sides: 20 }
 macros:
   - { label: "Initiative", roll: "1d20 + dex" }
   - { label: "Attack (Str)", roll: "1d20 + str + proficiency" }
@@ -355,7 +360,7 @@ operate manually, needing nothing new:
 
 - Two hidden Influence cards per player = two Cards dealt from a shuffled Stack, each
   Hidden by its owner — the same primitive used for every other hidden hand.
-- Coins = an ordinary per-player Track (e.g. `values: [0..30]`). "Steal 2 coins" is just
+- Coins = an ordinary per-player Track (e.g. `values: "0..30"`). "Steal 2 coins" is just
   the two players involved adjusting their own Tracks — Tracks aren't ownership-locked
   any more than Cards are (see NETWORKING.md "Trust model"), so this needs no new
   mechanism, the same as a thief and a mark each moving their own coin pile at a

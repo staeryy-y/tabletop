@@ -15,7 +15,7 @@ tracks:
   - key: proficiency
     label: "Proficiency Bonus"
     formula: "ceil(level.raw / 4) + 1"
-  - { key: hp, label: "Hit Points", values: [0..40] }
+  - { key: hp, label: "Hit Points", values: "0..40" }
 dice:
   - { key: d20, sides: 20 }
   - { key: d6, sides: 6 }
