@@ -69,15 +69,20 @@ that touched this log.
   Start 2P") and blockier low-radius shapes instead of smooth webapp rounding. Dense text
   (chat log, form inputs, the package editor) deliberately stays on the existing
   monospace stack — legibility over strict theme purity there.
-- Table state now actually survives a host reloading or briefly closing their tab —
-  `app/signaling.py`'s in-memory recovery snapshot used to be wiped the instant a room's
-  peer count hit zero (see `_handle_disconnect`), so reopening a room you'd just been
-  alone in always started blank; it's now kept until either someone reopens the room
-  (resuming from it) or the **server process itself restarts** (still in-memory only,
-  per D14 — no game state is written to disk, so a full server restart still resets
-  everything; only the browser-level reload/close case was ever the bug). Also added a
-  best-effort final snapshot upload on `pagehide` (tab close/reload/navigate-away) so
-  reloading right after a move doesn't lose up to the full 5s periodic-upload window.
+- Table state now actually survives a host reloading or closing their tab. Two layers,
+  see D18:
+  - The real fix: `net/tableStore.ts` persists the host's table snapshot to that
+    browser's own IndexedDB, and `you-are-host` prefers it over whatever the server last
+    saw. A first attempt at this fixed the wrong layer (making the *server's* in-memory
+    snapshot durable via SQLite) before landing here — reverted; the server round trip,
+    upload-interval staleness, and dependence on the process not having restarted were
+    never the point for a same-browser reload, which needs none of that.
+  - Left in place underneath it, for the case local storage can't cover (a *different*
+    peer promoted to host): `app/signaling.py`'s in-memory recovery snapshot no longer
+    gets wiped the instant a room's peer count hits zero (`_handle_disconnect`), and a
+    best-effort final upload fires on `pagehide` to shrink the staleness window. Still
+    in-memory only server-side (per D14) — a full server *process* restart resets a room
+    unless some peer's own browser still has it locally.
 
 ## Known gaps / open feedback
 

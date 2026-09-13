@@ -181,6 +181,13 @@ empty, so reopening the room resumes from it the same way a live handoff would, 
 blank table. The snapshot only ever really disappears if the server process itself
 restarts (it's in-memory only, per D14 — no game state is written to disk).
 
+That said, this server-side path is the *fallback*, not the primary way a host reload
+recovers — see D18: the host's own browser keeps a local IndexedDB copy of the table
+(net/tableStore.ts) and prefers it on `you-are-host`, so its own tab reloading resumes
+instantly with no server round trip, network staleness window, or dependence on this
+process not having restarted at all. The behavior above is what a *different* peer
+being promoted to host still falls back on.
+
 This means a mid-session host disconnect costs a brief reconnect pause and up to a few
 seconds of the most recent state, not the whole session — acceptable for a tabletop game,
 and avoids needing the server to understand game state to reconstruct it.

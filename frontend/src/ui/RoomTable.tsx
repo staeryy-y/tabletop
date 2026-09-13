@@ -6,6 +6,7 @@ import { ChatDistributor, ChatMessage } from "../net/chatSync";
 import { PackageDistributor } from "../net/packageTransfer";
 import { RoomConnection } from "../net/roomConnection";
 import { Peer, SignalingConnection } from "../net/signaling";
+import { TableStore } from "../net/tableStore";
 import { createEmptyPackage, GamePackage } from "../packages/gamePackage";
 import { fetchBundledPackage } from "../packages/gameDefinitionLoader";
 import { PackageStore } from "../packages/packageStore";
@@ -13,11 +14,13 @@ import { loadRoomToken } from "../roomToken";
 import { getRememberedRoomPackageId } from "../roomPackageChoice";
 import { Chat } from "./Chat";
 
-/** How often the host uploads a recovery snapshot to the signaling server (see
- * docs/NETWORKING.md "Host migration" and app/signaling.py's `snapshot` message) — just
- * enough that a newly-promoted host (after the old one drops) doesn't resume from a
- * very stale table. Cheap: it's a no-op unless this client currently is host. */
-const SNAPSHOT_UPLOAD_INTERVAL_MS = 5000;
+/** How often the host persists its table state — locally (IndexedDB, net/tableStore.ts,
+ * so *this browser* reopening the room resumes instantly with no server round trip at
+ * all — this is what actually fixes a host refreshing their own tab) and to the
+ * signaling server (docs/NETWORKING.md "Host migration" — for the different case local
+ * storage can't cover: a *different* peer being promoted to host after this one is gone
+ * for good). Cheap either way: a no-op unless this client currently is host. */
+const SNAPSHOT_PERSIST_INTERVAL_MS = 5000;
 
 // A tiny built-in demo deck, shown only when the room's package has no card sets of its
 // own — proves out Card/Stack/Hide interaction (M3) even for a bare freeform room.
@@ -44,6 +47,7 @@ function cardDefsFromPackage(pkg: GamePackage): CardDef[] {
 }
 
 const packageStore = new PackageStore();
+const tableStore = new TableStore();
 
 export function RoomTable({ slug }: { slug: string }) {
   const canvasHost = useRef<HTMLDivElement>(null);
@@ -113,22 +117,20 @@ export function RoomTable({ slug }: { slug: string }) {
     connRef.current = conn;
     let mySelfId: string | null = null;
 
-    function uploadSnapshotIfHost(): void {
-      if (roomConnRef.current?.isHost) {
-        conn.send({ type: "snapshot", blob: roomConnRef.current.currentSnapshot() });
-      }
+    function persistSnapshotIfHost(): void {
+      if (!roomConnRef.current?.isHost) return;
+      const piles = roomConnRef.current.currentSnapshot();
+      conn.send({ type: "snapshot", blob: piles });
+      void tableStore.save(slug, piles);
     }
-    const snapshotInterval = setInterval(uploadSnapshotIfHost, SNAPSHOT_UPLOAD_INTERVAL_MS);
+    const snapshotInterval = setInterval(persistSnapshotIfHost, SNAPSHOT_PERSIST_INTERVAL_MS);
     // Best-effort: also flush immediately when the tab is about to go away (reload,
     // close, navigate elsewhere) rather than only relying on the periodic interval —
     // otherwise reloading right after a move could lose up to
-    // SNAPSHOT_UPLOAD_INTERVAL_MS worth of the most recent state (see
-    // app/signaling.py's _handle_disconnect, which now keeps whatever snapshot exists
-    // rather than wiping it on a solo reload — this just shrinks how stale it can be).
-    // `pagehide` fires more reliably than `beforeunload` across mobile/bfcache cases;
-    // a plain synchronous WebSocket send of a small JSON message on either is
-    // reliable enough in practice, unlike an async fetch that can get cancelled.
-    window.addEventListener("pagehide", uploadSnapshotIfHost);
+    // SNAPSHOT_PERSIST_INTERVAL_MS worth of the most recent state. `pagehide` fires
+    // more reliably than `beforeunload` across mobile/bfcache cases; the IndexedDB
+    // write and the WS send are both fire-and-forget here, same as the interval above.
+    window.addEventListener("pagehide", persistSnapshotIfHost);
 
     const unsubscribe = conn.on((event) => {
       if (event.type === "welcome") {
@@ -251,18 +253,40 @@ export function RoomTable({ slug }: { slug: string }) {
       } else if (event.type === "you-are-host") {
         setHostId(mySelfId);
         if (!roomConnRef.current) return; // welcome always arrives first — see above
-        const snapshot = (event.snapshot as PileState[] | null | undefined) ?? null;
-        const client = roomConnRef.current.becomeHostFromMigration(snapshot, [...otherPeerIdsRef.current]);
-        table.setSyncClient(client);
-        seedDemoDeckIfHost();
-        if (loadedPkgRef.current) seedPackageIfHost(loadedPkgRef.current);
+        const serverSnapshot = (event.snapshot as PileState[] | null | undefined) ?? null;
+        (async () => {
+          // Prefer this browser's own local copy over whatever the server last saw:
+          // it's guaranteed to be exactly what this tab itself last showed (no upload
+          // race, no staleness window), and covers the common case the server-side
+          // snapshot can't — the room going fully empty, or this being the very first
+          // "you-are-host" this server process has ever handed out for it. Falls back
+          // to the server's copy only when this browser has never held this room's
+          // table before (a different peer being promoted, or a genuinely new room).
+          const localSnapshot = await tableStore.load(slug);
+          if (disposed || !roomConnRef.current) return;
+          const snapshot = localSnapshot ?? serverSnapshot;
+          if (snapshot !== null && snapshot.length > 0) {
+            // Resuming real content (from local storage, or a genuine peer migration
+            // that already had state) — never inject the starter demo deck/package
+            // cards on top of it. seedDemoDeckIfHost/seedPackageIfHost's own flags
+            // only ever protect against seeding *twice*, not against seeding into an
+            // already-nonempty table, so pre-marking them here is what actually
+            // prevents duplicated content on every resume.
+            seededRef.current.demo = true;
+            seededRef.current.pkg = true;
+          }
+          const client = roomConnRef.current.becomeHostFromMigration(snapshot, [...otherPeerIdsRef.current]);
+          table.setSyncClient(client);
+          seedDemoDeckIfHost();
+          if (loadedPkgRef.current) seedPackageIfHost(loadedPkgRef.current);
+        })();
       }
     });
 
     return () => {
       disposed = true;
       clearInterval(snapshotInterval);
-      window.removeEventListener("pagehide", uploadSnapshotIfHost);
+      window.removeEventListener("pagehide", persistSnapshotIfHost);
       unsubscribe();
       conn.close();
       connRef.current = null;

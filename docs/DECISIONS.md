@@ -261,3 +261,30 @@ asset cache keyed by it, and any retry logic for a dropped chunk — a lost chun
 means that attempt silently never completes, acceptable given the cooperating-players
 trust model (NETWORKING.md "Trust model") and the fact that a package is requested once,
 not continuously streamed.
+
+## D18 — A host reloading resumes from its own browser's IndexedDB, not the server
+
+The host's client already periodically uploads a recovery snapshot to the signaling
+server (NETWORKING.md "Host migration"), but that exists for a narrower reason — so a
+*different* peer can take over if the host is gone for good — and depending on it for
+the far more common case (the host simply reloading their own tab) turned out to be
+fragile in exactly the way relying on a server round trip for a same-machine event
+always is: bound by the periodic upload interval's staleness window, and by whether a
+best-effort flush on the tab's `pagehide` event actually completes before the
+WebSocket tears down. A first attempt at hardening this made the server-side snapshot
+durable across a process restart too (persisting it to SQLite) — but that was solving
+the wrong layer: a host's own browser reloading doesn't need the server involved at
+all to remember what it was just showing.
+
+net/tableStore.ts persists the host's current table snapshot to that browser's own
+IndexedDB, keyed by room slug, on the same cadence the server upload already used.
+On becoming host (`you-are-host`), this local copy — if present — is preferred over
+whatever the server last saw: it's guaranteed to be exactly this tab's own most recent
+state, with no network involved and no staleness window. The server-side snapshot
+remains exactly what it always was, unrevised: the fallback for a peer that has no
+local copy of its own (a different peer being promoted, or a genuinely first-ever
+host), not the primary mechanism for the same-browser-reload case. Server state is
+still in-memory only (see D14) — a full server *process* restart still starts a room
+fresh unless some peer's own browser still has it locally, which is an accepted
+consequence of not persisting a game's actual state to the server (D14's real
+concern), not an oversight this decision reopens.
