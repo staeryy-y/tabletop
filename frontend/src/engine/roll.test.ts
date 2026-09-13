@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RollContext, RollEvalError, RollParseError, evaluateRoll, parseRoll, roll } from "./roll";
+import { RollContext, RollError, RollEvalError, RollParseError, evaluateRoll, formatRollResult, parseRoll, roll } from "./roll";
 
 function sequenceRng(values: number[]): () => number {
   let i = 0;
@@ -245,5 +245,44 @@ describe("roll() — parse and evaluate together", () => {
 
   it("propagates a parse error", () => {
     expect(() => roll("1d20 +", ctx())).toThrow(RollParseError);
+  });
+});
+
+describe("RollError hierarchy", () => {
+  it("both RollParseError and RollEvalError are catchable as the common RollError", () => {
+    expect(new RollParseError("x")).toBeInstanceOf(RollError);
+    expect(new RollEvalError("x")).toBeInstanceOf(RollError);
+  });
+});
+
+describe("formatRollResult", () => {
+  it("shows the individual dice for a single pool", () => {
+    const result = evaluateRoll(parseRoll("1d20"), ctx({ rng: sequenceRng([0.5]) }));
+    expect(formatRollResult(result)).toBe("[11] = 11");
+  });
+
+  it("shows a plain number term as-is", () => {
+    const result = evaluateRoll(parseRoll("5"), ctx());
+    expect(formatRollResult(result)).toBe("5 = 5");
+  });
+
+  it("shows a resolved stat with its computed value in parens", () => {
+    const result = evaluateRoll(parseRoll("dex"), ctx());
+    expect(formatRollResult(result)).toBe("dex(3) = 3");
+  });
+
+  it("shows a pool_die stat's individual dice, not just its total", () => {
+    const result = evaluateRoll(parseRoll("might"), ctx({ rng: sequenceRng([3 / 6]) }));
+    expect(formatRollResult(result)).toBe("might[1,1,1] = 3");
+  });
+
+  it("combines multiple terms with their signs", () => {
+    const result = evaluateRoll(parseRoll("1d20 + dex - 1"), ctx({ rng: sequenceRng([0.5]) }));
+    expect(formatRollResult(result)).toBe("[11] + dex(3) - 1 = 13");
+  });
+
+  it("a negative-total roll still formats the leading sign correctly (no leading '+ ')", () => {
+    const result = evaluateRoll(parseRoll("str"), ctx()); // -1
+    expect(formatRollResult(result)).toBe("str(-1) = -1");
   });
 });

@@ -1,14 +1,20 @@
 import { useEffect, useState } from "preact/hooks";
 import { ApiError, Me, RoomSummary, UserSummary, auth, rooms, users } from "../net/api";
+import { StoredPackage, PackageStore } from "../packages/packageStore";
+import { rememberRoomPackageId } from "../roomPackageChoice";
 import { GamePackages } from "./GamePackages";
+
+const packageStore = new PackageStore();
 
 export function AdminDashboard({ me, onLoggedOut }: { me: Me; onLoggedOut: () => void }) {
   const [roomList, setRoomList] = useState<RoomSummary[]>([]);
   const [userList, setUserList] = useState<UserSummary[]>([]);
+  const [customPackages, setCustomPackages] = useState<StoredPackage[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const [roomName, setRoomName] = useState("");
   const [roomPassword, setRoomPassword] = useState("");
+  const [roomPackage, setRoomPackage] = useState("bundled:generic-freeform");
 
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -18,6 +24,7 @@ export function AdminDashboard({ me, onLoggedOut }: { me: Me; onLoggedOut: () =>
     try {
       setRoomList(await rooms.list());
       setUserList(await users.list());
+      setCustomPackages(await packageStore.list());
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     }
@@ -31,7 +38,9 @@ export function AdminDashboard({ me, onLoggedOut }: { me: Me; onLoggedOut: () =>
     e.preventDefault();
     setError(null);
     try {
-      const { slug } = await rooms.create(roomName, roomPassword || null);
+      const isCustom = roomPackage.startsWith("custom:");
+      const { slug } = await rooms.create(roomName, roomPassword || null, isCustom ? "custom" : roomPackage);
+      if (isCustom) rememberRoomPackageId(slug, roomPackage.slice("custom:".length));
       setRoomName("");
       setRoomPassword("");
       await refresh();
@@ -99,6 +108,15 @@ export function AdminDashboard({ me, onLoggedOut }: { me: Me; onLoggedOut: () =>
             value={roomPassword}
             onInput={(e) => setRoomPassword((e.target as HTMLInputElement).value)}
           />
+          <select value={roomPackage} onChange={(e) => setRoomPackage((e.target as HTMLSelectElement).value)}>
+            <option value="bundled:generic-freeform">Generic Freeform</option>
+            <option value="bundled:dnd5e-srd">D&amp;D 5e (SRD)</option>
+            {customPackages.map((p) => (
+              <option value={`custom:${p.id}`} key={p.id}>
+                {p.pkg.name} (yours)
+              </option>
+            ))}
+          </select>
           <button type="submit">Create room</button>
         </form>
       </section>

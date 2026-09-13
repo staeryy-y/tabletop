@@ -14,8 +14,9 @@
 // so nothing is actually lost by requiring the count on a literal pool.
 import { evaluateFormula } from "./formula";
 
-export class RollParseError extends Error {}
-export class RollEvalError extends Error {}
+export class RollError extends Error {}
+export class RollParseError extends RollError {}
+export class RollEvalError extends RollError {}
 
 export type Comparator = ">=" | ">" | "<=" | "<" | "==";
 
@@ -248,4 +249,20 @@ export function evaluateRoll(expr: RollExpr, ctx: RollContext): RollResult {
 /** Parse and evaluate in one call — what `/roll <expr>` actually does. */
 export function roll(input: string, ctx: RollContext): RollResult {
   return evaluateRoll(parseRoll(input), ctx);
+}
+
+/** A human-readable breakdown for chat, e.g. "[14] + dex(3) = 17" — showing the actual
+ * dice a pool rolled (not just its total) is the whole point of posting a roll to a
+ * shared chat rather than a private number, per the cooperating-players trust model
+ * (see docs/NETWORKING.md) — everyone can see it wasn't fudged. */
+export function formatRollResult(result: RollResult): string {
+  const parts = result.breakdown.map(({ sign, term }, i) => {
+    const prefix = i === 0 ? (sign === -1 ? "-" : "") : sign === 1 ? " + " : " - ";
+    if (term.kind === "pool") return `${prefix}[${term.rolls.join(",")}]`;
+    if (term.kind === "number") return `${prefix}${term.value}`;
+    // stat
+    if (term.pool) return `${prefix}${term.name}[${term.pool.rolls.join(",")}]`;
+    return `${prefix}${term.name}(${term.value})`;
+  });
+  return `${parts.join("")} = ${result.total}`;
 }

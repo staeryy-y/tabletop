@@ -2,18 +2,40 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { CardDef } from "../engine/card";
 import { TableApp } from "../engine/table";
 import { Peer, SignalingConnection } from "../net/signaling";
+import { GamePackage } from "../packages/gamePackage";
+import { loadPackageForRoom } from "../packages/gameDefinitionLoader";
+import { PackageStore } from "../packages/packageStore";
 import { loadRoomToken } from "../roomToken";
+import { getRememberedRoomPackageId } from "../roomPackageChoice";
+import { Chat } from "./Chat";
 
-// A tiny built-in demo deck, purely to prove out Card/Stack/Hide interaction (M3) —
-// not a real game definition. Loading an actual game package (docs/GAME_DEFINITION.md)
-// is M4/M5 and isn't wired up yet.
+// A tiny built-in demo deck, shown only when the room's package has no card sets of its
+// own — proves out Card/Stack/Hide interaction (M3) even for a bare freeform room.
 const DEMO_DECK: CardDef[] = ["A", "B", "C", "D", "E", "F"].map((letter, i) => ({
   id: `demo-${letter}`,
   front: { title: `Card ${letter}`, color: [0xf4d35e, 0xee964b, 0xf95738, 0x0d3b66, 0x3fa796, 0x9381ff][i], text: "Demo content" },
   back: { title: "", color: 0x333333 },
 }));
 
+const FALLBACK_CARD_COLOR = 0x556070;
 const COLOR_SWATCHES = ["#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#42d4f4", "#f032e6", "#bfef45"];
+
+/** Card sets from a loaded package, flattened to engine/card.ts's CardDef shape.
+ * Note: an image front (a card built with an uploaded image in the editor) doesn't
+ * render as an actual picture yet — the PixiJS renderer only draws color/text faces so
+ * far (see engine/card.ts) — it falls back to a plain color so it's still visible and
+ * playable rather than crashing; real image rendering on the canvas is a follow-up. */
+function cardDefsFromPackage(pkg: GamePackage): CardDef[] {
+  return pkg.cardSets.flatMap((set) =>
+    set.entries.map((entry) => ({
+      id: `${set.key}:${entry.id}`,
+      front: { title: entry.front.title, text: entry.front.text, color: entry.front.color ?? FALLBACK_CARD_COLOR },
+      back: { title: set.back?.title ?? "", color: set.back?.color ?? 0x333333 },
+    })),
+  );
+}
+
+const packageStore = new PackageStore();
 
 export function RoomTable({ slug }: { slug: string }) {
   const canvasHost = useRef<HTMLDivElement>(null);
@@ -24,6 +46,8 @@ export function RoomTable({ slug }: { slug: string }) {
   const [hostId, setHostId] = useState<string | null>(null);
   const [gmId, setGmId] = useState<string | null>(null);
   const [roomName, setRoomName] = useState(slug);
+  const [pkg, setPkg] = useState<GamePackage | null>(null);
+  const [displayName, setDisplayName] = useState("");
 
   useEffect(() => {
     const token = loadRoomToken(slug);
@@ -31,6 +55,7 @@ export function RoomTable({ slug }: { slug: string }) {
       location.hash = `#/join/${slug}`;
       return;
     }
+    setDisplayName(token.displayName);
 
     let table: TableApp | null = null;
     let disposed = false;
@@ -42,7 +67,7 @@ export function RoomTable({ slug }: { slug: string }) {
         return;
       }
       tableRef.current = table;
-      // A small starting hand so the table isn't empty on first load.
+      // A small starting hand so the table isn't empty before/without a package.
       DEMO_DECK.forEach((def, i) => table!.spawnCard(def, (i - 2.5) * 70, 150));
     })();
 
@@ -66,6 +91,26 @@ export function RoomTable({ slug }: { slug: string }) {
           next.set(event.peerId, { peerId: event.peerId, name: token.displayName, isGM: event.gmPeerId === event.peerId, color: "#888888", eyesClosed: false });
           return next;
         });
+
+        // Load the room's game package (docs/GAME_DEFINITION.md) — bundled fetches a
+        // static file; custom only resolves if *this* browser is the one that picked it
+        // (see roomPackageChoice.ts — the server never stores which one, per
+        // docs/DECISIONS.md D14). Any other peer sees the honest empty placeholder until
+        // M6's P2P package transfer exists.
+        (async () => {
+          const ref = event.roomInfo.gameDefRef;
+          const customId = ref === "custom" ? getRememberedRoomPackageId(slug) : null;
+          const customPkg = customId ? (await packageStore.get(customId))?.pkg : undefined;
+          try {
+            const loaded = await loadPackageForRoom(ref, customPkg);
+            if (disposed) return;
+            setPkg(loaded);
+            const cardDefs = cardDefsFromPackage(loaded);
+            cardDefs.forEach((def, i) => tableRef.current?.spawnCard(def, (i - (cardDefs.length - 1) / 2) * 70, -150));
+          } catch (err) {
+            console.error("failed to load game package", err);
+          }
+        })();
       } else if (event.type === "peer-joined" || event.type === "presence-changed") {
         setPeers((prev) => new Map(prev).set(event.peerId, event));
       } else if (event.type === "peer-left") {
@@ -101,7 +146,9 @@ export function RoomTable({ slug }: { slug: string }) {
   function spawnRandomCard() {
     // Stand-in for GM "spawn" (docs/ARCHITECTURE.md "Roles: GM vs. players") until the
     // object model is actually synced (M6) and gated by GM attestation.
-    const def = DEMO_DECK[Math.floor(Math.random() * DEMO_DECK.length)];
+    const deck = pkg ? cardDefsFromPackage(pkg) : [];
+    const pool = deck.length > 0 ? deck : DEMO_DECK;
+    const def = pool[Math.floor(Math.random() * pool.length)];
     tableRef.current?.spawnCard(def, (Math.random() - 0.5) * 300, (Math.random() - 0.5) * 200);
   }
 
@@ -119,6 +166,7 @@ export function RoomTable({ slug }: { slug: string }) {
         <h2>{roomName}</h2>
         <p class="hint">
           <a href="#/">&larr; dashboard</a>
+          {pkg && ` · ${pkg.name}`}
         </p>
 
         <h3>You</h3>
@@ -157,6 +205,9 @@ export function RoomTable({ slug }: { slug: string }) {
           ))}
           {peers.size === 0 && <li class="hint">Connecting…</li>}
         </ul>
+
+        <Chat pkg={pkg} displayName={displayName} />
+
         <p class="hint">
           Right-click a card: flip, hide, rotate 90°, or (once stacked) shuffle/draw. Drag the small
           handle above a card to rotate it freely. Drag one card onto another to stack them. WASD pans
@@ -164,8 +215,8 @@ export function RoomTable({ slug }: { slug: string }) {
         </p>
         <p class="hint">
           Not yet wired up: syncing this table to other browsers over WebRTC (M6 in the plan) — right
-          now each tab's table is local to itself; presence (who's here, colors, eyes-closed) is real
-          and synced, but cards/tokens are not yet.
+          now each tab's table (and chat) is local to itself; presence (who's here, colors,
+          eyes-closed) is real and synced, but cards/tokens/chat are not yet.
         </p>
       </aside>
       <div class="table-toolbar">

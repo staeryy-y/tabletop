@@ -318,6 +318,73 @@ button:disabled {
   display: block;
 }
 
+/* Chat + roll + macros */
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.chat-log {
+  max-height: 160px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+}
+
+.chat-message {
+  word-break: break-word;
+}
+
+.chat-message.error {
+  color: #ff8080;
+}
+
+.quick-sheet {
+  font-size: 0.85rem;
+}
+
+.quick-sheet summary {
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.quick-sheet-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.quick-sheet-row input {
+  width: 60px;
+}
+
+.macros {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.macros button {
+  font-size: 0.8rem;
+  padding: 5px 8px;
+}
+
+.chat-input {
+  display: flex;
+  gap: 6px;
+}
+
+.chat-input input {
+  flex: 1;
+}
+
 /* Card right-click menu — a plain DOM overlay, not part of the PixiJS scene. */
 .card-menu {
   position: fixed;
