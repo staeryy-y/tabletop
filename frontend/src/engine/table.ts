@@ -48,6 +48,7 @@ const HINT_INTERVAL_MS = 120;
  * being moved — mirrors the alpha a local drag already uses (see beginDrag), reset back
  * to 1 the moment the real, authoritative drop event arrives. */
 const REMOTE_DRAG_ALPHA = 0.85;
+const CURSOR_RADIUS = 6;
 
 const KEY_TO_INPUT: Record<string, keyof CameraInput> = {
   w: "up", s: "down", a: "left", d: "right", q: "rotateCCW", e: "rotateCW",
@@ -111,6 +112,16 @@ export class TableApp implements TableView {
   // its own copy from the presence list (net/signaling.ts), not yet a synced table
   // object (that needs M6's real P2P object sync).
   private playerTokens = new Map<string, Container>();
+  /** peerId -> their current color, refreshed on every setPlayers() call — cursors
+   * (below) are colored markers, and this is the only place TableApp knows anyone's
+   * color at all. */
+  private playerColors = new Map<string, string>();
+  /** Other players' live pointer positions ("cursor-hint" — see syncProtocol.ts), kept
+   * "always visible" per the explicit request, not just during a drag/rotate gesture.
+   * Never includes this client's own cursor — the browser already draws that; see
+   * maybeSendCursorHint/applyEvent's "cursor-hint" branch. */
+  private cursors = new Map<string, Container>();
+  private lastCursorHintAt = 0;
 
   async init(container: HTMLElement): Promise<void> {
     await this.app.init({ resizeTo: container, background: "#2b2a33", antialias: false });
@@ -208,7 +219,29 @@ export class TableApp implements TableView {
       // here, since a local rotate doesn't dim its own view either.
       const view = this.views.get(event.pileId);
       if (view) view.rotation = event.radians;
+    } else if (event.type === "cursor-hint") {
+      this.updateCursor(event.byPeerId, event.x, event.y);
     }
+  }
+
+  /** Move (creating if needed) the small colored marker showing where `peerId`'s
+   * pointer currently is. Redrawn with their latest known color every time, not just
+   * on creation, so a color change (the swatch picker) doesn't leave a stale-colored
+   * cursor behind. */
+  private updateCursor(peerId: string, x: number, y: number): void {
+    let marker = this.cursors.get(peerId);
+    if (!marker) {
+      marker = new Container();
+      this.cursors.set(peerId, marker);
+      this.world.addChild(marker);
+    }
+    marker.removeChildren();
+    const g = new Graphics();
+    g.circle(0, 0, CURSOR_RADIUS);
+    g.fill({ color: this.playerColors.get(peerId) ?? "#888888" });
+    g.stroke({ width: 1.5, color: 0x1a1a1a });
+    marker.addChild(g);
+    marker.position.set(x, y);
   }
 
   // --- Camera: WASD pan, Q/E rotate (engine/camera.ts does the actual math) ---
@@ -236,6 +269,7 @@ export class TableApp implements TableView {
   setPlayers(players: PlayerInfo[]): void {
     const seats = computeSeatPositions(players.length, PLAYER_SEAT_RADIUS);
     const seen = new Set<string>();
+    this.playerColors = new Map(players.map((p) => [p.peerId, p.color]));
 
     players.forEach((player, i) => {
       seen.add(player.peerId);
@@ -257,6 +291,15 @@ export class TableApp implements TableView {
       if (!seen.has(peerId)) {
         this.world.removeChild(view);
         this.playerTokens.delete(peerId);
+      }
+    }
+
+    // A cursor for someone who's left has nothing more to show — drop it rather than
+    // leaving a stale marker frozen at their last known position.
+    for (const [peerId, view] of this.cursors) {
+      if (!seen.has(peerId)) {
+        this.world.removeChild(view);
+        this.cursors.delete(peerId);
       }
     }
   }
@@ -480,20 +523,35 @@ export class TableApp implements TableView {
     this.syncClient.sendRequest({ type: "rotate-hint", pileId, radians });
   }
 
+  /** Same idea as maybeSendDragHint/maybeSendRotateHint, for this client's own pointer
+   * position — see syncProtocol.ts's "cursor-hint" doc comment for why this fires all
+   * the time, not just mid-gesture. */
+  private maybeSendCursorHint(x: number, y: number): void {
+    if (!this.syncClient) return;
+    const now = performance.now();
+    if (now - this.lastCursorHintAt < HINT_INTERVAL_MS) return;
+    this.lastCursorHintAt = now;
+    this.syncClient.sendRequest({ type: "cursor-hint", x, y });
+  }
+
   private onBackgroundPointerDown(e: FederatedPointerEvent): void {
     if (e.target === this.app.stage) this.panning = true;
   }
 
   private onPointerMove(e: FederatedPointerEvent): void {
+    // Sent regardless of what else is going on (dragging, rotating, panning, or just
+    // hovering) — "client cursors should also show up always... to make it feel more
+    // alive," not only mid-gesture like drag/rotate-hint.
+    const local = this.world.toLocal(e.global);
+    this.maybeSendCursorHint(local.x, local.y);
+
     if (this.rotating) {
-      const local = this.world.toLocal(e.global);
       const angle = Math.atan2(local.x - this.rotating.view.position.x, -(local.y - this.rotating.view.position.y));
       this.rotating.radians = angle;
       this.rotating.view.rotation = angle;
       if (!this.syncClient) this.model.setRotation(this.rotating.pileId, angle);
       else this.maybeSendRotateHint(this.rotating.pileId, angle);
     } else if (this.dragging) {
-      const local = this.world.toLocal(e.global);
       this.dragging.x = local.x;
       this.dragging.y = local.y;
       this.dragging.view.position.set(local.x, local.y);

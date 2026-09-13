@@ -103,6 +103,12 @@ that touched this log.
 
 Newest first. Fixed items move to "Implemented" above with a note here of what changed.
 
+- **(Fixed)** Client cursors are now always visible, not just mid-drag — a new
+  "cursor-hint" (`net/syncProtocol.ts`, alongside drag-hint/rotate-hint: cosmetic,
+  peer→host→everyone-except-sender, never touches the model) fires on every pointer
+  move over the canvas at the same ~120ms throttle, rendered as a small colored dot per
+  peer (`engine/table.ts`'s `cursors` map) using their current presence color.
+
 - **(Fixed)** A batch of smaller room-UI feedback:
   - The demo deck was still spawning alongside a real game package's cards — a real
     ordering bug: the host used to seed the demo deck immediately (package loading is

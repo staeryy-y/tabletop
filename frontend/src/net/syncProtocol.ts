@@ -43,14 +43,21 @@ export type TableRequest =
   | { type: "drag-hint"; pileId: string; x: number; y: number }
   /** The rotate-handle's equivalent of drag-hint — same cosmetic-only treatment, for
    * the same reason: the eventual "set-rotation" request is what's authoritative. */
-  | { type: "rotate-hint"; pileId: string; radians: number };
+  | { type: "rotate-hint"; pileId: string; radians: number }
+  /** Where this peer's pointer currently is — not tied to a pile at all, unlike the two
+   * hints above. Sent continuously (throttled) while connected, not just during a
+   * gesture, so every other player's cursor is always visible ("to make it feel more
+   * alive") rather than only appearing mid-drag. No pileId here since there's nothing
+   * being manipulated; it's purely presence. */
+  | { type: "cursor-hint"; x: number; y: number };
 
 export type TableEvent =
   | { type: "pile-upserted"; pile: PileState }
   | { type: "pile-removed"; pileId: string }
   | { type: "snapshot"; piles: PileState[] }
   | { type: "drag-hint"; pileId: string; x: number; y: number; byPeerId: string }
-  | { type: "rotate-hint"; pileId: string; radians: number; byPeerId: string };
+  | { type: "rotate-hint"; pileId: string; radians: number; byPeerId: string }
+  | { type: "cursor-hint"; x: number; y: number; byPeerId: string };
 
 /** A pile as it should appear to `recipientPeerId` — unchanged unless the top card is
  * hidden from them, in which case its front is replaced by its back (and faceUp forced
@@ -96,6 +103,10 @@ export class HostTableSync {
     }
     if (req.type === "rotate-hint") {
       this.relayHint(fromPeerId, { type: "rotate-hint", pileId: req.pileId, radians: req.radians, byPeerId: fromPeerId });
+      return;
+    }
+    if (req.type === "cursor-hint") {
+      this.relayHint(fromPeerId, { type: "cursor-hint", x: req.x, y: req.y, byPeerId: fromPeerId });
       return;
     }
 
@@ -205,6 +216,7 @@ export class PeerTableSync {
         break;
       case "drag-hint":
       case "rotate-hint":
+      case "cursor-hint":
         break; // cosmetic only — see TableEvent's doc comment; nothing to mirror into the model
     }
   }
@@ -244,5 +256,8 @@ export class PeerTableSync {
   }
   rotateHint(pileId: string, radians: number): void {
     this.sendToHost({ type: "rotate-hint", pileId, radians });
+  }
+  cursorHint(x: number, y: number): void {
+    this.sendToHost({ type: "cursor-hint", x, y });
   }
 }

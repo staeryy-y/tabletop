@@ -324,6 +324,25 @@ describe("HostTableSync — rotate-hint (cosmetic, never touches the model)", ()
   });
 });
 
+describe("HostTableSync — cursor-hint (cosmetic presence, not tied to any pile)", () => {
+  it("relays the hint to every recipient except the sender, tagged with who it's from", () => {
+    const { sync, sent } = makeHost(["host", "alice", "bob"]);
+
+    sync.handleRequest("alice", { type: "cursor-hint", x: 10, y: 20 });
+
+    expect(sent).toEqual([
+      { recipient: "host", event: { type: "cursor-hint", x: 10, y: 20, byPeerId: "alice" } },
+      { recipient: "bob", event: { type: "cursor-hint", x: 10, y: 20, byPeerId: "alice" } },
+    ]);
+  });
+
+  it("touches nothing in the model — there's no pile involved at all", () => {
+    const { model, sync } = makeHost(["host"]);
+    expect(() => sync.handleRequest("host", { type: "cursor-hint", x: 1, y: 1 })).not.toThrow();
+    expect(model.allPiles()).toHaveLength(0);
+  });
+});
+
 describe("HostTableSync — sendSnapshotTo", () => {
   it("sends every current pile, redacted for that recipient", () => {
     const { model, sync, sent } = makeHost(["alice", "bob"]);
@@ -464,6 +483,12 @@ describe("PeerTableSync — sending requests to the host", () => {
     const { sync, requests } = makePeer();
     sync.rotateHint("p1", 2.1);
     expect(requests).toEqual([{ type: "rotate-hint", pileId: "p1", radians: 2.1 }]);
+  });
+
+  it("cursorHint", () => {
+    const { sync, requests } = makePeer();
+    sync.cursorHint(5, 6);
+    expect(requests).toEqual([{ type: "cursor-hint", x: 5, y: 6 }]);
   });
 });
 
