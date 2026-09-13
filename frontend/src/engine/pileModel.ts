@@ -115,9 +115,28 @@ export class TableModel {
     if (top) top.hidden = !top.hidden;
   }
 
-  rotate90(pileId: string): void {
+  /** Rotate by an arbitrary angle (radians, either sign) — the general case, e.g. for
+   * dragging a rotation handle continuously so players seated around the table (see
+   * seating.ts) can orient their own cards to face themselves. Always normalized into
+   * [0, 2π) so rotation never grows unboundedly across many small drag updates. */
+  rotateBy(pileId: string, deltaRadians: number): void {
     const pile = this.piles.get(pileId);
-    if (pile) pile.rotation = (pile.rotation + Math.PI / 2) % (2 * Math.PI);
+    if (!pile) return;
+    const twoPi = 2 * Math.PI;
+    pile.rotation = ((pile.rotation + deltaRadians) % twoPi + twoPi) % twoPi;
+  }
+
+  setRotation(pileId: string, radians: number): void {
+    const pile = this.piles.get(pileId);
+    if (!pile) return;
+    const twoPi = 2 * Math.PI;
+    pile.rotation = ((radians % twoPi) + twoPi) % twoPi;
+  }
+
+  /** A 90° step is just the common case of rotateBy — kept as its own method since
+   * it's still the right-click menu's default action. */
+  rotate90(pileId: string): void {
+    this.rotateBy(pileId, Math.PI / 2);
   }
 
   /** Fisher-Yates, with an injectable RNG (defaulting to Math.random) purely so tests

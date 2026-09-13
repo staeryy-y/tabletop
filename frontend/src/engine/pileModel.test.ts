@@ -204,6 +204,43 @@ describe("flip / toggleHide / rotate90 — act on the top card or whole pile onl
     model.rotate90(pile.id);
     expect(pile.rotation).toBeCloseTo(0, 10); // 4 * 90° = full turn, wrapped
   });
+
+  it("rotateBy accepts an arbitrary continuous angle, for dragging a rotation handle", () => {
+    const model = new TableModel();
+    const pile = model.spawnCard(DEF_A, 0, 0);
+    model.rotateBy(pile.id, 0.3);
+    expect(pile.rotation).toBeCloseTo(0.3);
+    model.rotateBy(pile.id, 0.1);
+    expect(pile.rotation).toBeCloseTo(0.4);
+  });
+
+  it("rotateBy accepts negative deltas and still normalizes into [0, 2π)", () => {
+    const model = new TableModel();
+    const pile = model.spawnCard(DEF_A, 0, 0);
+    model.rotateBy(pile.id, -0.5);
+    expect(pile.rotation).toBeGreaterThanOrEqual(0);
+    expect(pile.rotation).toBeCloseTo(2 * Math.PI - 0.5);
+  });
+
+  it("rotateBy on a nonexistent pile does not throw", () => {
+    const model = new TableModel();
+    expect(() => model.rotateBy("ghost", 1)).not.toThrow();
+  });
+
+  it("setRotation sets an absolute angle regardless of the current one", () => {
+    const model = new TableModel();
+    const pile = model.spawnCard(DEF_A, 0, 0);
+    model.rotateBy(pile.id, 5);
+    model.setRotation(pile.id, 1.234);
+    expect(pile.rotation).toBeCloseTo(1.234);
+  });
+
+  it("setRotation normalizes a value outside [0, 2π)", () => {
+    const model = new TableModel();
+    const pile = model.spawnCard(DEF_A, 0, 0);
+    model.setRotation(pile.id, -Math.PI / 2);
+    expect(pile.rotation).toBeCloseTo((3 * Math.PI) / 2);
+  });
 });
 
 describe("shuffle", () => {

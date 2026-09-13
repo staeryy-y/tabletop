@@ -153,6 +153,86 @@ def test_unknown_message_type_is_ignored_without_raising():
     assert sender.ws.sent == []
 
 
+# --- set-presence: color + eyes-closed, presence metadata over the signaling WS ---
+
+
+def test_peer_default_color_comes_from_the_palette():
+    for _ in range(50):  # random.choice — sample enough to catch a bad palette/typo
+        peer = make_peer("p")
+        assert peer.color in signaling.DEFAULT_COLOR_PALETTE
+
+
+def test_peer_starts_with_eyes_open():
+    assert make_peer("p").eyes_closed is False
+
+
+def test_set_presence_updates_color_and_broadcasts_to_everyone_including_the_sender():
+    state = RoomState()
+    sender = make_peer("sender")
+    bystander = make_peer("bystander")
+    state.peers = {"sender": sender, "bystander": bystander}
+
+    asyncio.run(signaling._handle_message(state, sender, {"type": "set-presence", "color": "#123abc"}))
+
+    assert sender.color == "#123abc"
+    expected = {
+        "type": "presence-changed",
+        "peerId": "sender",
+        "name": "sender",
+        "isGM": False,
+        "color": "#123abc",
+        "eyesClosed": False,
+    }
+    assert sender.ws.sent == [expected]
+    assert bystander.ws.sent == [expected]
+
+
+def test_set_presence_rejects_a_malformed_color_and_keeps_the_previous_one():
+    state = RoomState()
+    sender = make_peer("sender")
+    sender.color = "#000000"
+    state.peers = {"sender": sender}
+
+    for bad in ["red", "#12345", "#gggggg", "123abc", "#12345678"]:
+        asyncio.run(signaling._handle_message(state, sender, {"type": "set-presence", "color": bad}))
+        assert sender.color == "#000000", f"{bad!r} should have been rejected"
+
+
+def test_set_presence_toggles_eyes_closed():
+    state = RoomState()
+    sender = make_peer("sender")
+    state.peers = {"sender": sender}
+
+    asyncio.run(signaling._handle_message(state, sender, {"type": "set-presence", "eyesClosed": True}))
+    assert sender.eyes_closed is True
+
+    asyncio.run(signaling._handle_message(state, sender, {"type": "set-presence", "eyesClosed": False}))
+    assert sender.eyes_closed is False
+
+
+def test_set_presence_ignores_a_non_boolean_eyes_closed():
+    state = RoomState()
+    sender = make_peer("sender")
+    state.peers = {"sender": sender}
+
+    asyncio.run(signaling._handle_message(state, sender, {"type": "set-presence", "eyesClosed": "yes"}))
+    assert sender.eyes_closed is False
+
+
+def test_set_presence_with_neither_field_still_broadcasts_current_presence():
+    # Harmless no-op update — still confirms the broadcast always reflects live state.
+    state = RoomState()
+    sender = make_peer("sender", is_gm=True)
+    state.peers = {"sender": sender}
+
+    asyncio.run(signaling._handle_message(state, sender, {"type": "set-presence"}))
+
+    assert sender.ws.sent == [
+        {"type": "presence-changed", "peerId": "sender", "name": "sender", "isGM": True,
+         "color": sender.color, "eyesClosed": False}
+    ]
+
+
 # --- _handle_disconnect ---
 
 
@@ -281,7 +361,54 @@ def test_ws_peer_joined_is_broadcast_to_existing_peers_only(admin_client, second
             assert welcome2["hostPeerId"] == welcome1["peerId"], "Bob should not become host — Alice already is"
 
             joined_evt = ws1.receive_json()
-            assert joined_evt == {"type": "peer-joined", "peerId": welcome2["peerId"], "name": "Bob", "isGM": False}
+            assert joined_evt["type"] == "peer-joined"
+            assert joined_evt["peerId"] == welcome2["peerId"]
+            assert joined_evt["name"] == "Bob"
+            assert joined_evt["isGM"] is False
+
+
+def test_ws_welcome_lists_every_already_connected_peer_so_a_joiner_sees_them_immediately(admin_client, second_client):
+    slug = admin_client.post("/api/rooms", json={"name": "R"}).json()["slug"]
+    join1 = _join(admin_client, slug, "Alice")
+    join2 = _join(second_client, slug, "Bob")
+
+    with admin_client.websocket_connect(f"/ws/room/{slug}?token={join1['token']}") as ws1:
+        welcome1 = ws1.receive_json()
+        assert welcome1["peers"] == []  # Alice is first; no one else here yet
+        ws1.receive_json()  # you-are-host
+
+        with second_client.websocket_connect(f"/ws/room/{slug}?token={join2['token']}") as ws2:
+            welcome2 = ws2.receive_json()
+            assert len(welcome2["peers"]) == 1
+            assert welcome2["peers"][0]["peerId"] == welcome1["peerId"]
+            assert welcome2["peers"][0]["name"] == "Alice"
+            assert "color" in welcome2["peers"][0]
+            assert welcome2["peers"][0]["eyesClosed"] is False
+            # and it should not list Bob himself
+            assert all(p["peerId"] != welcome2["peerId"] for p in welcome2["peers"])
+
+
+def test_ws_set_presence_round_trips_to_other_connected_peers(admin_client, second_client):
+    slug = admin_client.post("/api/rooms", json={"name": "R"}).json()["slug"]
+    join1 = _join(admin_client, slug, "Alice")
+    join2 = _join(second_client, slug, "Bob")
+
+    with admin_client.websocket_connect(f"/ws/room/{slug}?token={join1['token']}") as ws1:
+        ws1.receive_json()  # welcome
+        ws1.receive_json()  # you-are-host
+
+        with second_client.websocket_connect(f"/ws/room/{slug}?token={join2['token']}") as ws2:
+            ws2.receive_json()  # welcome
+            ws1.receive_json()  # peer-joined
+
+            ws2.send_json({"type": "set-presence", "color": "#00ff00", "eyesClosed": True})
+
+            update_on_1 = ws1.receive_json()
+            update_on_2 = ws2.receive_json()  # the sender also gets the canonical broadcast
+            assert update_on_1 == update_on_2
+            assert update_on_1["type"] == "presence-changed"
+            assert update_on_1["color"] == "#00ff00"
+            assert update_on_1["eyesClosed"] is True
 
 
 def test_ws_offer_answer_relay_end_to_end(admin_client, second_client):

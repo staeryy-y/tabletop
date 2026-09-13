@@ -14,14 +14,24 @@ export interface Peer {
   peerId: string;
   name: string;
   isGM: boolean;
+  color: string;
+  eyesClosed: boolean;
 }
 
 export type SignalingEvent =
-  | { type: "welcome"; peerId: string; hostPeerId: string | null; gmPeerId: string | null; roomInfo: RoomInfo }
+  | {
+      type: "welcome";
+      peerId: string;
+      hostPeerId: string | null;
+      gmPeerId: string | null;
+      roomInfo: RoomInfo;
+      peers: Peer[];
+    }
   | { type: "you-are-host"; snapshot: unknown }
-  | { type: "peer-joined"; peerId: string; name: string; isGM: boolean }
+  | ({ type: "peer-joined" } & Peer)
   | { type: "peer-left"; peerId: string }
   | { type: "host-changed"; hostPeerId: string }
+  | ({ type: "presence-changed" } & Peer)
   | { type: "offer" | "answer" | "ice"; to: string; from: string; [key: string]: unknown }
   | { type: "relay"; from: string; payload: unknown };
 
@@ -47,6 +57,14 @@ export class SignalingConnection {
 
   send(message: Record<string, unknown>): void {
     this.ws.send(JSON.stringify(message));
+  }
+
+  /** Update this peer's own color and/or eyes-closed state; either field is optional
+   * (send only what changed). The server echoes the result back as a `presence-changed`
+   * broadcast to everyone, sender included — see app/signaling.py's set-presence
+   * handler — so callers should update their UI from that event, not optimistically. */
+  setPresence(update: { color?: string; eyesClosed?: boolean }): void {
+    this.send({ type: "set-presence", ...update });
   }
 
   close(): void {

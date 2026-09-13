@@ -13,15 +13,17 @@ const DEMO_DECK: CardDef[] = ["A", "B", "C", "D", "E", "F"].map((letter, i) => (
   back: { title: "", color: 0x333333 },
 }));
 
+const COLOR_SWATCHES = ["#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#42d4f4", "#f032e6", "#bfef45"];
+
 export function RoomTable({ slug }: { slug: string }) {
   const canvasHost = useRef<HTMLDivElement>(null);
   const tableRef = useRef<TableApp | null>(null);
-  const [peers, setPeers] = useState<Peer[]>([]);
+  const connRef = useRef<SignalingConnection | null>(null);
+  const [peers, setPeers] = useState<Map<string, Peer>>(new Map());
   const [selfId, setSelfId] = useState<string | null>(null);
   const [hostId, setHostId] = useState<string | null>(null);
   const [gmId, setGmId] = useState<string | null>(null);
   const [roomName, setRoomName] = useState(slug);
-  const [connError, setConnError] = useState<string | null>(null);
 
   useEffect(() => {
     const token = loadRoomToken(slug);
@@ -45,21 +47,37 @@ export function RoomTable({ slug }: { slug: string }) {
     })();
 
     const conn = new SignalingConnection(slug, token.token);
+    connRef.current = conn;
+    let mySelfId: string | null = null;
+
     const unsubscribe = conn.on((event) => {
       if (event.type === "welcome") {
+        mySelfId = event.peerId;
         setSelfId(event.peerId);
         setHostId(event.hostPeerId);
         setGmId(event.gmPeerId);
         setRoomName(event.roomInfo.name);
-        setPeers((prev) => [...prev, { peerId: event.peerId, name: token.displayName, isGM: event.gmPeerId === event.peerId }]);
-      } else if (event.type === "peer-joined") {
-        setPeers((prev) => [...prev, { peerId: event.peerId, name: event.name, isGM: event.isGM }]);
+        setPeers((prev) => {
+          const next = new Map(prev);
+          for (const p of event.peers) next.set(p.peerId, p);
+          // Our own presence isn't in `peers` (that list is "everyone else") — the
+          // server doesn't echo it back on welcome, so seed a placeholder now;
+          // set-presence / a later presence-changed will fill in real values.
+          next.set(event.peerId, { peerId: event.peerId, name: token.displayName, isGM: event.gmPeerId === event.peerId, color: "#888888", eyesClosed: false });
+          return next;
+        });
+      } else if (event.type === "peer-joined" || event.type === "presence-changed") {
+        setPeers((prev) => new Map(prev).set(event.peerId, event));
       } else if (event.type === "peer-left") {
-        setPeers((prev) => prev.filter((p) => p.peerId !== event.peerId));
+        setPeers((prev) => {
+          const next = new Map(prev);
+          next.delete(event.peerId);
+          return next;
+        });
       } else if (event.type === "host-changed") {
         setHostId(event.hostPeerId);
       } else if (event.type === "you-are-host") {
-        setHostId(selfId);
+        setHostId(mySelfId);
       }
     });
 
@@ -67,16 +85,32 @@ export function RoomTable({ slug }: { slug: string }) {
       disposed = true;
       unsubscribe();
       conn.close();
+      connRef.current = null;
       table?.destroy();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
+
+  // Keep the table's default player tokens (engine/seating.ts) in sync with presence.
+  useEffect(() => {
+    tableRef.current?.setPlayers([...peers.values()].map((p) => ({ peerId: p.peerId, name: p.name, color: p.color })));
+  }, [peers]);
+
+  const me = selfId ? peers.get(selfId) : undefined;
 
   function spawnRandomCard() {
     // Stand-in for GM "spawn" (docs/ARCHITECTURE.md "Roles: GM vs. players") until the
     // object model is actually synced (M6) and gated by GM attestation.
     const def = DEMO_DECK[Math.floor(Math.random() * DEMO_DECK.length)];
     tableRef.current?.spawnCard(def, (Math.random() - 0.5) * 300, (Math.random() - 0.5) * 200);
+  }
+
+  function toggleEyesClosed() {
+    connRef.current?.setPresence({ eyesClosed: !me?.eyesClosed });
+  }
+
+  function pickColor(color: string) {
+    connRef.current?.setPresence({ color });
   }
 
   return (
@@ -86,26 +120,52 @@ export function RoomTable({ slug }: { slug: string }) {
         <p class="hint">
           <a href="#/">&larr; dashboard</a>
         </p>
+
+        <h3>You</h3>
+        <div class="my-presence">
+          <button
+            class={"eyes-toggle" + (me?.eyesClosed ? " closed" : "")}
+            onClick={toggleEyesClosed}
+            title={me?.eyesClosed ? "Open your eyes" : "Close your eyes (for reveal moments, e.g. Avalon/Mafia)"}
+          >
+            {me?.eyesClosed ? "\u{1F648} Eyes closed" : "\u{1F441} Eyes open"}
+          </button>
+          <div class="swatches">
+            {COLOR_SWATCHES.map((c) => (
+              <button
+                key={c}
+                class={"swatch" + (me?.color === c ? " selected" : "")}
+                style={{ background: c }}
+                onClick={() => pickColor(c)}
+                aria-label={`use color ${c}`}
+              />
+            ))}
+          </div>
+        </div>
+
         <h3>Presence</h3>
         <ul class="peer-list">
-          {peers.map((p) => (
+          {[...peers.values()].map((p) => (
             <li key={p.peerId}>
+              <span class="peer-dot" style={{ background: p.color }} />
               {p.name}
               {p.peerId === selfId && " (you)"}
               {p.peerId === hostId && " • host"}
               {p.peerId === gmId && " • GM"}
+              {p.eyesClosed && " • \u{1F648}"}
             </li>
           ))}
-          {peers.length === 0 && <li class="hint">Connecting…</li>}
+          {peers.size === 0 && <li class="hint">Connecting…</li>}
         </ul>
-        {connError && <p class="error">{connError}</p>}
         <p class="hint">
-          Right-click a card: flip, hide, rotate, or (once stacked) shuffle/draw. Drag one card onto
-          another to stack them.
+          Right-click a card: flip, hide, rotate 90°, or (once stacked) shuffle/draw. Drag the small
+          handle above a card to rotate it freely. Drag one card onto another to stack them. WASD pans
+          the camera, Q/E rotates it — handy when players are seated on different sides of the table.
         </p>
         <p class="hint">
           Not yet wired up: syncing this table to other browsers over WebRTC (M6 in the plan) — right
-          now each tab's table is local to itself.
+          now each tab's table is local to itself; presence (who's here, colors, eyes-closed) is real
+          and synced, but cards/tokens are not yet.
         </p>
       </aside>
       <div class="table-toolbar">

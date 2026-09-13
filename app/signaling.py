@@ -9,16 +9,29 @@ principle 1.
 """
 from __future__ import annotations
 
+import random
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from app.db import connection
 from app.rooms import get_room_by_slug, verify_guest_token
 
 router = APIRouter()
+
+_HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}")
+
+# A small, visually-distinct palette for the random default assignment — see
+# docs/GAME_DEFINITION.md-adjacent request: every player gets a color, randomly
+# assigned but changeable, used for their default player Token and (once M6 lands)
+# their live cursor. This is presence metadata, not table state, so it rides the
+# already-working signaling WS rather than waiting on the P2P object-sync layer.
+DEFAULT_COLOR_PALETTE = [
+    "#e6194b", "#3cb44b", "#4363d8", "#f58231",
+    "#911eb4", "#42d4f4", "#f032e6", "#bfef45",
+]
 
 
 @dataclass
@@ -28,6 +41,8 @@ class Peer:
     is_gm: bool
     ws: WebSocket
     joined_at: float = field(default_factory=time.monotonic)
+    color: str = field(default_factory=lambda: random.choice(DEFAULT_COLOR_PALETTE))
+    eyes_closed: bool = False
 
 
 @dataclass
@@ -60,12 +75,6 @@ def _session_user_id(websocket: WebSocket) -> Optional[int]:
         return None
 
 
-def _room_owner_id(slug: str) -> Optional[int]:
-    with connection() as conn:
-        row = conn.execute("SELECT owner_user_id FROM rooms WHERE slug = ?", (slug,)).fetchone()
-    return row["owner_user_id"] if row else None
-
-
 async def _send(peer: Peer, message: dict) -> None:
     try:
         await peer.ws.send_json(message)
@@ -77,6 +86,10 @@ async def _broadcast(state: RoomState, message: dict, exclude: Optional[str] = N
     for pid, peer in list(state.peers.items()):
         if pid != exclude:
             await _send(peer, message)
+
+
+def _presence(peer: Peer) -> dict:
+    return {"peerId": peer.peer_id, "name": peer.name, "isGM": peer.is_gm, "color": peer.color, "eyesClosed": peer.eyes_closed}
 
 
 @router.websocket("/ws/room/{slug}")
@@ -111,13 +124,16 @@ async def room_socket(websocket: WebSocket, slug: str, token: str) -> None:
             "hostPeerId": state.host_peer_id,
             "gmPeerId": next((pid for pid, p in state.peers.items() if p.is_gm), None),
             "roomInfo": {"slug": room["slug"], "name": room["name"], "gameDefRef": room["game_def_ref"]},
+            # Every already-connected peer's presence, so a joiner can render everyone
+            # immediately rather than waiting on a peer-joined for each one it missed.
+            "peers": [_presence(p) for p in state.peers.values() if p.peer_id != peer_id],
         },
     )
     if is_first:
         await _send(peer, {"type": "you-are-host", "snapshot": state.snapshot})
     await _broadcast(
         state,
-        {"type": "peer-joined", "peerId": peer_id, "name": peer.name, "isGM": is_gm},
+        {"type": "peer-joined", **_presence(peer)},
         exclude=peer_id,
     )
 
@@ -155,6 +171,20 @@ async def _handle_message(state: RoomState, sender: Peer, msg: dict) -> None:
 
     if msg_type == "promote-ack":
         return  # informational only; nothing to do server-side
+
+    if msg_type == "set-presence":
+        # Partial update: a client sends only the field(s) it's changing. Presence
+        # (color, eyes-closed), unlike game state, is cheap enough and infrequent
+        # enough to just live on the signaling WS rather than needing the P2P data
+        # channel — see docs/NETWORKING.md's transport-layer split.
+        color = msg.get("color")
+        if isinstance(color, str) and _HEX_COLOR.fullmatch(color):
+            sender.color = color
+        eyes_closed = msg.get("eyesClosed")
+        if isinstance(eyes_closed, bool):
+            sender.eyes_closed = eyes_closed
+        await _broadcast(state, {"type": "presence-changed", **_presence(sender)})
+        return
 
 
 async def _handle_disconnect(state: RoomState, peer_id: str) -> None:

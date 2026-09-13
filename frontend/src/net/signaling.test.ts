@@ -104,6 +104,12 @@ describe("SignalingConnection", () => {
     expect(FakeWebSocket.instances[0].sent).toEqual([JSON.stringify({ type: "offer", to: "p2", sdp: "xyz" })]);
   });
 
+  it("setPresence() sends a set-presence message with only the given fields", () => {
+    const conn = new SignalingConnection("room", "tok");
+    conn.setPresence({ eyesClosed: true });
+    expect(FakeWebSocket.instances[0].sent).toEqual([JSON.stringify({ type: "set-presence", eyesClosed: true })]);
+  });
+
   it("close() closes the underlying socket", () => {
     const conn = new SignalingConnection("room", "tok");
     conn.close();

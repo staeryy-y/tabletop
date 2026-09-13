@@ -7,20 +7,53 @@
 // This is the M3 milestone (docs/PLAN.md): the sandbox works entirely locally in this
 // tab for now. Syncing it P2P over WebRTC (and the WS-relay fallback) is M6 and isn't
 // wired up here yet — see net/signaling.ts.
-import { Application, Container, FederatedPointerEvent } from "pixi.js";
-import { CARD_WIDTH, CardDef, renderCard } from "./card";
+import { Application, Container, FederatedPointerEvent, Graphics, Text } from "pixi.js";
+import { CameraInput, NO_CAMERA_INPUT, stepCamera } from "./camera";
+import { CARD_HEIGHT, CARD_WIDTH, CardDef, renderCard } from "./card";
 import { PileState, TableModel } from "./pileModel";
+import { computeSeatPositions } from "./seating";
 
 const MERGE_RADIUS = CARD_WIDTH * 0.6;
+const ROTATE_HANDLE_OFFSET = CARD_HEIGHT / 2 + 16;
+const CAMERA_PAN_SPEED = 400; // world units/second
+const CAMERA_ROTATE_SPEED = Math.PI / 2; // radians/second
+const PLAYER_TOKEN_RADIUS = 16;
+const PLAYER_SEAT_RADIUS = 260;
+
+const KEY_TO_INPUT: Record<string, keyof CameraInput> = {
+  w: "up", s: "down", a: "left", d: "right", q: "rotateCCW", e: "rotateCW",
+};
+
+interface PlayerInfo {
+  peerId: string;
+  name: string;
+  color: string;
+}
 
 export class TableApp {
   private app = new Application();
   private world = new Container();
   private model = new TableModel();
   private views = new Map<string, Container>();
+  private faceLayers = new Map<string, Container>();
   private dragging: { pile: PileState; view: Container } | null = null;
+  private rotating: { pileId: string; view: Container } | null = null;
   private panning = false;
   private menuEl: HTMLDivElement | null = null;
+
+  // Camera: WASD pans, Q/E rotates — see engine/camera.ts. Each player's own view is
+  // independent; nothing here is synced to other peers (that's presence/table state,
+  // out of scope for a camera).
+  private cameraInput: CameraInput = { ...NO_CAMERA_INPUT };
+  private onKeyDown = (e: KeyboardEvent) => this.setCameraKey(e.key.toLowerCase(), true);
+  private onKeyUp = (e: KeyboardEvent) => this.setCameraKey(e.key.toLowerCase(), false);
+
+  // Default per-player colored tokens (see docs/GAME_DEFINITION.md's Tokens) — one per
+  // connected peer, arranged evenly around the table (seating.ts) so e.g. 3 players form
+  // a triangle and 5 a pentagon. Purely local presentation for now: each client places
+  // its own copy from the presence list (net/signaling.ts), not yet a synced table
+  // object (that needs M6's real P2P object sync).
+  private playerTokens = new Map<string, Container>();
 
   async init(container: HTMLElement): Promise<void> {
     await this.app.init({ resizeTo: container, background: "#2b2a33", antialias: false });
@@ -41,11 +74,107 @@ export class TableApp {
     document.addEventListener("pointerdown", (e) => {
       if (this.menuEl && !this.menuEl.contains(e.target as Node)) this.closeMenu();
     });
+
+    // Keyboard camera controls. Attached to the window (not the canvas) so they work
+    // regardless of which element currently has focus, matching how WASD behaves in
+    // most browser-based tabletop/game UIs.
+    window.addEventListener("keydown", this.onKeyDown);
+    window.addEventListener("keyup", this.onKeyUp);
+    this.app.ticker.add((ticker) => this.tickCamera(ticker.deltaMS / 1000));
   }
 
   destroy(): void {
     this.closeMenu();
+    window.removeEventListener("keydown", this.onKeyDown);
+    window.removeEventListener("keyup", this.onKeyUp);
     this.app.destroy(true, { children: true });
+  }
+
+  // --- Camera: WASD pan, Q/E rotate (engine/camera.ts does the actual math) ---
+
+  private setCameraKey(key: string, pressed: boolean): void {
+    const field = KEY_TO_INPUT[key];
+    if (field) this.cameraInput = { ...this.cameraInput, [field]: pressed };
+  }
+
+  private tickCamera(dtSeconds: number): void {
+    const next = stepCamera(
+      { x: this.world.position.x, y: this.world.position.y, rotation: this.world.rotation },
+      this.cameraInput,
+      dtSeconds,
+      CAMERA_PAN_SPEED * this.world.scale.x,
+      CAMERA_ROTATE_SPEED,
+    );
+    this.world.position.set(next.x, next.y);
+    this.world.rotation = next.rotation;
+  }
+
+  // --- Default player tokens: one colored marker per connected peer, arranged around
+  // the table. Call this whenever the presence list changes (join/leave/color change). ---
+
+  setPlayers(players: PlayerInfo[]): void {
+    const seats = computeSeatPositions(players.length, PLAYER_SEAT_RADIUS);
+    const seen = new Set<string>();
+
+    players.forEach((player, i) => {
+      seen.add(player.peerId);
+      let view = this.playerTokens.get(player.peerId);
+      if (!view) {
+        view = this.mountPlayerToken(player);
+        this.playerTokens.set(player.peerId, view);
+      } else {
+        this.redrawPlayerToken(view, player);
+      }
+      // Only place it at its default seat until a player first drags it somewhere else
+      // (tracked via a flag on the view itself, since there's no model entry for it).
+      if (!(view as Container & { moved?: boolean }).moved) {
+        view.position.set(seats[i].x, seats[i].y);
+      }
+    });
+
+    for (const [peerId, view] of this.playerTokens) {
+      if (!seen.has(peerId)) {
+        this.world.removeChild(view);
+        this.playerTokens.delete(peerId);
+      }
+    }
+  }
+
+  private mountPlayerToken(player: PlayerInfo): Container {
+    const view = new Container();
+    this.redrawPlayerToken(view, player);
+    view.eventMode = "static";
+    view.cursor = "grab";
+    let dragging = false;
+    view.on("pointerdown", (e: FederatedPointerEvent) => {
+      e.stopPropagation();
+      dragging = true;
+    });
+    this.app.stage.on("pointermove", (e: FederatedPointerEvent) => {
+      if (!dragging) return;
+      const local = this.world.toLocal(e.global);
+      view.position.set(local.x, local.y);
+      (view as Container & { moved?: boolean }).moved = true;
+    });
+    this.app.stage.on("pointerup", () => (dragging = false));
+    this.app.stage.on("pointerupoutside", () => (dragging = false));
+    this.world.addChild(view);
+    return view;
+  }
+
+  private redrawPlayerToken(view: Container, player: PlayerInfo): void {
+    view.removeChildren();
+    const g = new Graphics();
+    g.circle(0, 0, PLAYER_TOKEN_RADIUS);
+    g.fill({ color: player.color });
+    g.stroke({ width: 2, color: 0x1a1a1a });
+    view.addChild(g);
+    const label = new Text({
+      text: player.name.slice(0, 1).toUpperCase(),
+      style: { fontFamily: "monospace", fontSize: 14, fill: 0x1a1a1a, fontWeight: "bold" },
+    });
+    label.anchor.set(0.5);
+    view.addChild(label);
   }
 
   /** Spawn a brand-new standalone pile (a GM-only action per the object model — see
@@ -79,18 +208,46 @@ export class TableApp {
       this.model.flip(pile.id);
       this.redraw(pile.id);
     });
+
+    // The face is drawn into its own child container, not `view` directly, so redraw()
+    // (which clears and repaints it every time) never wipes out the rotate handle below.
+    const faceLayer = new Container();
+    view.addChild(faceLayer);
+    this.faceLayers.set(pile.id, faceLayer);
+
+    view.addChild(this.makeRotateHandle(pile.id));
+
     this.world.addChild(view);
     this.views.set(pile.id, view);
     this.redraw(pile.id);
     return view;
   }
 
+  /** A small handle above the card, draggable to rotate it continuously — see
+   * docs/GAME_DEFINITION.md's request: players seated around the table (seating.ts)
+   * need to orient their own cards to face themselves, not just the 90°-step rotation
+   * on the right-click menu. */
+  private makeRotateHandle(pileId: string): Container {
+    const handle = new Graphics();
+    handle.circle(0, -ROTATE_HANDLE_OFFSET, 5);
+    handle.fill({ color: 0xffffff, alpha: 0.6 });
+    handle.stroke({ width: 1, color: 0x1a1a1a });
+    handle.eventMode = "static";
+    handle.cursor = "grab";
+    handle.on("pointerdown", (e: FederatedPointerEvent) => {
+      e.stopPropagation();
+      const view = this.views.get(pileId);
+      if (view) this.rotating = { pileId, view };
+    });
+    return handle;
+  }
+
   private redraw(pileId: string): void {
     const pile = this.model.getPile(pileId);
-    const view = this.views.get(pileId);
-    if (!pile || !view) return;
+    const faceLayer = this.faceLayers.get(pileId);
+    if (!pile || !faceLayer) return;
     const top = pile.cards[pile.cards.length - 1];
-    renderCard(view, top.def, top.faceUp, top.hidden, pile.cards.length);
+    renderCard(faceLayer, top.def, top.faceUp, top.hidden, pile.cards.length);
   }
 
   private removeView(pileId: string): void {
@@ -98,6 +255,7 @@ export class TableApp {
     if (view) {
       this.world.removeChild(view);
       this.views.delete(pileId);
+      this.faceLayers.delete(pileId);
     }
   }
 
@@ -127,7 +285,12 @@ export class TableApp {
   }
 
   private onPointerMove(e: FederatedPointerEvent): void {
-    if (this.dragging) {
+    if (this.rotating) {
+      const local = this.world.toLocal(e.global);
+      const angle = Math.atan2(local.x - this.rotating.view.position.x, -(local.y - this.rotating.view.position.y));
+      this.model.setRotation(this.rotating.pileId, angle);
+      this.rotating.view.rotation = angle;
+    } else if (this.dragging) {
       const local = this.world.toLocal(e.global);
       this.dragging.pile.x = local.x;
       this.dragging.pile.y = local.y;
@@ -140,6 +303,7 @@ export class TableApp {
 
   private onPointerUp(): void {
     this.panning = false;
+    this.rotating = null;
     if (!this.dragging) return;
     const { pile, view } = this.dragging;
     this.dragging = null;
