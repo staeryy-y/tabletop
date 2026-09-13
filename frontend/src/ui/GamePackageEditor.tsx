@@ -1,0 +1,357 @@
+import { useState } from "preact/hooks";
+import {
+  CardEntry,
+  CardSet,
+  DiceDef,
+  GamePackage,
+  MacroDef,
+  PieceEntry,
+  PieceSet,
+  TrackDef,
+  validatePackage,
+} from "../packages/gamePackage";
+import { readImageAsDataUrl } from "../packages/imageUpload";
+
+let nextId = 1;
+const freshId = (prefix: string) => `${prefix}-${nextId++}`;
+
+function parseNumberList(text: string): number[] {
+  return text
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .map(Number)
+    .filter((n) => !Number.isNaN(n));
+}
+
+export function GamePackageEditor({
+  initial,
+  onSave,
+  onCancel,
+}: {
+  initial: GamePackage;
+  onSave: (pkg: GamePackage) => void;
+  onCancel: () => void;
+}) {
+  const [pkg, setPkg] = useState<GamePackage>(initial);
+  const errors = validatePackage(pkg);
+
+  function update(patch: Partial<GamePackage>) {
+    setPkg((p) => ({ ...p, ...patch }));
+  }
+
+  return (
+    <div class="editor">
+      <label>
+        Package name
+        <input value={pkg.name} onInput={(e) => update({ name: (e.target as HTMLInputElement).value })} />
+      </label>
+
+      <TracksEditor tracks={pkg.tracks} dice={pkg.dice} onChange={(tracks) => update({ tracks })} />
+      <DiceEditor dice={pkg.dice} onChange={(dice) => update({ dice })} />
+      <CardSetsEditor cardSets={pkg.cardSets} onChange={(cardSets) => update({ cardSets })} />
+      <PieceSetsEditor pieceSets={pkg.pieceSets} onChange={(pieceSets) => update({ pieceSets })} />
+      <MacrosEditor macros={pkg.macros} onChange={(macros) => update({ macros })} />
+
+      {errors.length > 0 && (
+        <div class="editor-errors">
+          {errors.map((e) => (
+            <p class="error" key={e}>
+              {e}
+            </p>
+          ))}
+        </div>
+      )}
+
+      <div class="editor-actions">
+        <button onClick={onCancel}>Cancel</button>
+        <button disabled={errors.length > 0} onClick={() => onSave(pkg)}>
+          Save package
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: preact.ComponentChildren }) {
+  return (
+    <fieldset class="editor-section">
+      <legend>{title}</legend>
+      {children}
+    </fieldset>
+  );
+}
+
+function TracksEditor({ tracks, dice, onChange }: { tracks: TrackDef[]; dice: DiceDef[]; onChange: (t: TrackDef[]) => void }) {
+  function add() {
+    onChange([...tracks, { key: `track${tracks.length + 1}`, label: "New Track", values: [0, 1, 2, 3, 4, 5] }]);
+  }
+  function update(i: number, patch: Partial<TrackDef>) {
+    onChange(tracks.map((t, idx) => (idx === i ? { ...t, ...patch } : t)));
+  }
+  function remove(i: number) {
+    onChange(tracks.filter((_, idx) => idx !== i));
+  }
+
+  return (
+    <Section title="Tracks (character-sheet stats)">
+      {tracks.map((t, i) => (
+        <div class="editor-row" key={i}>
+          <input class="key-input" value={t.key} placeholder="key" onInput={(e) => update(i, { key: (e.target as HTMLInputElement).value })} />
+          <input value={t.label} placeholder="label" onInput={(e) => update(i, { label: (e.target as HTMLInputElement).value })} />
+          <input
+            value={t.values.join(",")}
+            placeholder="values, e.g. 8,9,10,...,20"
+            onInput={(e) => update(i, { values: parseNumberList((e.target as HTMLInputElement).value) })}
+          />
+          <select
+            value={t.poolDie ?? ""}
+            onChange={(e) => update(i, { poolDie: (e.target as HTMLSelectElement).value || undefined })}
+          >
+            <option value="">no pool die</option>
+            {dice.map((d) => (
+              <option value={d.key} key={d.key}>
+                pool: {d.key}
+              </option>
+            ))}
+          </select>
+          <button onClick={() => remove(i)}>Remove</button>
+        </div>
+      ))}
+      <button onClick={add}>+ Add track</button>
+    </Section>
+  );
+}
+
+function DiceEditor({ dice, onChange }: { dice: DiceDef[]; onChange: (d: DiceDef[]) => void }) {
+  function add() {
+    onChange([...dice, { key: `d${dice.length + 1}`, sides: 6 }]);
+  }
+  function update(i: number, patch: Partial<DiceDef>) {
+    onChange(dice.map((d, idx) => (idx === i ? { ...d, ...patch } : d)));
+  }
+  function remove(i: number) {
+    onChange(dice.filter((_, idx) => idx !== i));
+  }
+
+  return (
+    <Section title="Dice">
+      {dice.map((d, i) => (
+        <div class="editor-row" key={i}>
+          <input class="key-input" value={d.key} placeholder="key" onInput={(e) => update(i, { key: (e.target as HTMLInputElement).value })} />
+          <input
+            type="number"
+            value={d.sides ?? ""}
+            placeholder="sides, e.g. 20"
+            onInput={(e) => {
+              const v = (e.target as HTMLInputElement).value;
+              update(i, { sides: v ? Number(v) : undefined, faces: v ? undefined : d.faces });
+            }}
+          />
+          <input
+            value={d.faces?.join(",") ?? ""}
+            placeholder="or custom faces, e.g. 0,0,0,1,1,2"
+            onInput={(e) => {
+              const v = (e.target as HTMLInputElement).value;
+              const faces = parseNumberList(v);
+              update(i, { faces: faces.length ? faces : undefined, sides: faces.length ? undefined : d.sides });
+            }}
+          />
+          <button onClick={() => remove(i)}>Remove</button>
+        </div>
+      ))}
+      <button onClick={add}>+ Add die</button>
+    </Section>
+  );
+}
+
+function CardSetsEditor({ cardSets, onChange }: { cardSets: CardSet[]; onChange: (c: CardSet[]) => void }) {
+  function addSet() {
+    onChange([...cardSets, { key: `set${cardSets.length + 1}`, entries: [] }]);
+  }
+  function updateSet(i: number, patch: Partial<CardSet>) {
+    onChange(cardSets.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
+  }
+  function removeSet(i: number) {
+    onChange(cardSets.filter((_, idx) => idx !== i));
+  }
+
+  return (
+    <Section title="Card sets">
+      {cardSets.map((set, i) => (
+        <div class="editor-subsection" key={i}>
+          <div class="editor-row">
+            <input class="key-input" value={set.key} placeholder="set key" onInput={(e) => updateSet(i, { key: (e.target as HTMLInputElement).value })} />
+            <button onClick={() => removeSet(i)}>Remove set</button>
+          </div>
+          <CardEntriesEditor entries={set.entries} onChange={(entries) => updateSet(i, { entries })} />
+        </div>
+      ))}
+      <button onClick={addSet}>+ Add card set</button>
+    </Section>
+  );
+}
+
+function CardEntriesEditor({ entries, onChange }: { entries: CardEntry[]; onChange: (e: CardEntry[]) => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+
+  function add() {
+    onChange([...entries, { id: freshId("card"), front: { title: "New Card" } }]);
+  }
+  function update(i: number, patch: Partial<CardEntry["front"]>) {
+    onChange(entries.map((e, idx) => (idx === i ? { ...e, front: { ...e.front, ...patch } } : e)));
+  }
+  function remove(i: number) {
+    onChange(entries.filter((_, idx) => idx !== i));
+  }
+  async function uploadImage(i: number, file: File | undefined) {
+    if (!file) return;
+    setBusy(entries[i].id);
+    try {
+      update(i, { image: await readImageAsDataUrl(file), title: entries[i].front.title });
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "failed to read image");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div class="entries">
+      {entries.map((entry, i) => (
+        <div class="entry-row" key={entry.id}>
+          {entry.front.image ? (
+            <img class="entry-thumb" src={entry.front.image} alt="" />
+          ) : (
+            <span class="entry-thumb entry-thumb-empty">text</span>
+          )}
+          <input
+            value={entry.front.title}
+            placeholder="title (or leave blank for image-only)"
+            onInput={(e) => update(i, { title: (e.target as HTMLInputElement).value })}
+          />
+          <input
+            value={entry.front.text ?? ""}
+            placeholder="body text (optional)"
+            onInput={(e) => update(i, { text: (e.target as HTMLInputElement).value })}
+          />
+          <input type="file" accept="image/*" onChange={(e) => uploadImage(i, (e.target as HTMLInputElement).files?.[0])} />
+          {entry.front.image && <button onClick={() => update(i, { image: undefined })}>Clear image</button>}
+          {busy === entry.id && <span class="hint">reading…</span>}
+          <button onClick={() => remove(i)}>Remove</button>
+        </div>
+      ))}
+      <button onClick={add}>+ Add card</button>
+    </div>
+  );
+}
+
+function PieceSetsEditor({ pieceSets, onChange }: { pieceSets: PieceSet[]; onChange: (p: PieceSet[]) => void }) {
+  function addSet() {
+    onChange([...pieceSets, { key: `pieces${pieceSets.length + 1}`, entries: [] }]);
+  }
+  function updateSet(i: number, patch: Partial<PieceSet>) {
+    onChange(pieceSets.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
+  }
+  function removeSet(i: number) {
+    onChange(pieceSets.filter((_, idx) => idx !== i));
+  }
+
+  return (
+    <Section title="Piece sets (board tiles, standees, tokens)">
+      {pieceSets.map((set, i) => (
+        <div class="editor-subsection" key={i}>
+          <div class="editor-row">
+            <input class="key-input" value={set.key} placeholder="set key" onInput={(e) => updateSet(i, { key: (e.target as HTMLInputElement).value })} />
+            <button onClick={() => removeSet(i)}>Remove set</button>
+          </div>
+          <PieceEntriesEditor entries={set.entries} onChange={(entries) => updateSet(i, { entries })} />
+        </div>
+      ))}
+      <button onClick={addSet}>+ Add piece set</button>
+    </Section>
+  );
+}
+
+function PieceEntriesEditor({ entries, onChange }: { entries: PieceEntry[]; onChange: (e: PieceEntry[]) => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+
+  function add() {
+    onChange([...entries, { id: freshId("piece"), symbol: "⭐" }]);
+  }
+  function update(i: number, patch: Partial<PieceEntry>) {
+    onChange(entries.map((e, idx) => (idx === i ? { ...e, ...patch } : e)));
+  }
+  function remove(i: number) {
+    onChange(entries.filter((_, idx) => idx !== i));
+  }
+  async function uploadImage(i: number, file: File | undefined) {
+    if (!file) return;
+    setBusy(entries[i].id);
+    try {
+      update(i, { image: await readImageAsDataUrl(file), symbol: undefined });
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "failed to read image");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div class="entries">
+      {entries.map((entry, i) => (
+        <div class="entry-row" key={entry.id}>
+          {entry.image ? (
+            <img class="entry-thumb" src={entry.image} alt="" />
+          ) : (
+            <span class="entry-thumb entry-thumb-symbol">{entry.symbol}</span>
+          )}
+          <input
+            value={entry.symbol ?? ""}
+            placeholder="emoji or symbol, e.g. ⚔️"
+            maxLength={4}
+            onInput={(e) => update(i, { symbol: (e.target as HTMLInputElement).value || undefined, image: (e.target as HTMLInputElement).value ? undefined : entry.image })}
+          />
+          <input type="file" accept="image/*" onChange={(e) => uploadImage(i, (e.target as HTMLInputElement).files?.[0])} />
+          <input
+            value={entry.connectors?.join(",") ?? ""}
+            placeholder="connectors, e.g. north,south (optional)"
+            onInput={(e) => {
+              const v = (e.target as HTMLInputElement).value;
+              const connectors = v.split(",").map((s) => s.trim()).filter(Boolean);
+              update(i, { connectors: connectors.length ? connectors : undefined });
+            }}
+          />
+          {busy === entry.id && <span class="hint">reading…</span>}
+          <button onClick={() => remove(i)}>Remove</button>
+        </div>
+      ))}
+      <button onClick={add}>+ Add piece</button>
+    </div>
+  );
+}
+
+function MacrosEditor({ macros, onChange }: { macros: MacroDef[]; onChange: (m: MacroDef[]) => void }) {
+  function add() {
+    onChange([...macros, { label: "New Macro", roll: "1d20" }]);
+  }
+  function update(i: number, patch: Partial<MacroDef>) {
+    onChange(macros.map((m, idx) => (idx === i ? { ...m, ...patch } : m)));
+  }
+  function remove(i: number) {
+    onChange(macros.filter((_, idx) => idx !== i));
+  }
+
+  return (
+    <Section title="Macros (roll buttons)">
+      {macros.map((m, i) => (
+        <div class="editor-row" key={i}>
+          <input value={m.label} placeholder="label" onInput={(e) => update(i, { label: (e.target as HTMLInputElement).value })} />
+          <input value={m.roll} placeholder="roll, e.g. 1d20 + dex" onInput={(e) => update(i, { roll: (e.target as HTMLInputElement).value })} />
+          <button onClick={() => remove(i)}>Remove</button>
+        </div>
+      ))}
+      <button onClick={add}>+ Add macro</button>
+    </Section>
+  );
+}

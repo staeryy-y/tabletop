@@ -1,5 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { ApiError, Me, RoomSummary, UserSummary, auth, rooms, users } from "../net/api";
+import { GamePackages } from "./GamePackages";
 
 export function AdminDashboard({ me, onLoggedOut }: { me: Me; onLoggedOut: () => void }) {
   const [roomList, setRoomList] = useState<RoomSummary[]>([]);
@@ -135,6 +136,8 @@ export function AdminDashboard({ me, onLoggedOut }: { me: Me; onLoggedOut: () =>
           <button type="submit">Create user</button>
         </form>
       </section>
+
+      <GamePackages />
     </div>
   );
 }
