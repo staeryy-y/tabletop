@@ -7,6 +7,7 @@
 // the rules this encodes: a Pile of one card *is* a Card; a Pile of more is a Stack;
 // there is no separate authored "deck" type.
 import { CardDef } from "./card";
+import { PieceDef } from "./piece";
 
 export interface CardInstance {
   def: CardDef;
@@ -28,12 +29,44 @@ export interface PileState {
 
 export type DropResult = { kind: "merged"; targetId: string } | { kind: "placed"; pile: PileState };
 
+/** The complete contents of a table — piles and pieces together — used wherever a full
+ * snapshot needs to travel as one value: the client-side recovery store
+ * (net/tableStore.ts), the signaling server's recovery blob (net/roomConnection.ts's
+ * currentSnapshot/becomeHostFromMigration), and net/syncProtocol.ts's own "snapshot"
+ * TableEvent (which spells the two fields out directly rather than nesting this type,
+ * so `pieces` there can stay optional for old call sites — see that type's own doc
+ * comment). */
+export interface TableSnapshot {
+  piles: PileState[];
+  pieces: PieceState[];
+}
+
+/** A placed Piece — see docs/GAME_DEFINITION.md "Pieces: board tiles, terrain, and
+ * anything else you place rather than stack" and engine/piece.ts's doc comment. Unlike
+ * PileState, deliberately has no `cards`/stack concept at all: a Piece never merges
+ * with another one (a pawn standing on a tile is just a visual overlap, not a combined
+ * object), so there's nothing here beyond "an id, a position, a rotation, and what it
+ * looks like." */
+export interface PieceState {
+  readonly id: string;
+  x: number;
+  y: number;
+  rotation: number;
+  def: PieceDef;
+}
+
 export class TableModel {
   private piles = new Map<string, PileState>();
   private nextId = 1;
+  private pieces = new Map<string, PieceState>();
+  private nextPieceId = 1;
 
   private newId(): string {
     return `pile-${this.nextId++}`;
+  }
+
+  private newPieceId(): string {
+    return `piece-${this.nextPieceId++}`;
   }
 
   spawnCard(def: CardDef, x: number, y: number): PileState {
@@ -79,10 +112,13 @@ export class TableModel {
   /** Replace this model's entire contents — used to apply a full snapshot, e.g. when a
    * newly-promoted host resumes from the last one uploaded (see
    * docs/NETWORKING.md "Host migration") or a joining peer receives the current table
-   * state. */
-  loadSnapshot(piles: PileState[]): void {
+   * state. `pieces` defaults to empty so every existing call site (and every existing
+   * test) that only ever knew about piles keeps working unchanged. */
+  loadSnapshot(piles: PileState[], pieces: PieceState[] = []): void {
     this.piles.clear();
     for (const pile of piles) this.piles.set(pile.id, pile);
+    this.pieces.clear();
+    for (const piece of pieces) this.pieces.set(piece.id, piece);
   }
 
   topCard(id: string): CardInstance | undefined {
@@ -235,5 +271,64 @@ export class TableModel {
     const pile: PileState = { id: this.newId(), x, y, rotation: 0, cards };
     this.piles.set(pile.id, pile);
     return pile;
+  }
+
+  // --- Pieces: see PieceState's doc comment for how/why this is deliberately kept
+  // separate from the Pile/Card methods above — no stacking, no flip, no hide, no
+  // merge-on-drop; just spawn, move, rotate, remove. ---
+
+  spawnPiece(def: PieceDef, x: number, y: number): PieceState {
+    const piece: PieceState = { id: this.newPieceId(), x, y, rotation: 0, def };
+    this.pieces.set(piece.id, piece);
+    return piece;
+  }
+
+  getPiece(id: string): PieceState | undefined {
+    return this.pieces.get(id);
+  }
+
+  allPieces(): PieceState[] {
+    return [...this.pieces.values()];
+  }
+
+  removePiece(id: string): void {
+    this.pieces.delete(id);
+  }
+
+  /** Insert or overwrite a piece by the id it already carries — the piece equivalent of
+   * setPile(); see that method's doc comment for why only the host ever allocates a
+   * fresh id (spawnPiece), and every other peer's mirror only ever receives complete
+   * PieceState objects through this method. */
+  setPiece(piece: PieceState): void {
+    this.pieces.set(piece.id, piece);
+  }
+
+  /** A plain reposition — there's no pickUpTop/dropPile equivalent for a Piece at all
+   * (see PieceState's doc comment: Pieces never merge), so this is the *only* way one
+   * ever changes position. A no-op if the piece doesn't exist (a race with something
+   * else removing it). */
+  movePiece(id: string, x: number, y: number): void {
+    const piece = this.pieces.get(id);
+    if (!piece) return;
+    piece.x = x;
+    piece.y = y;
+  }
+
+  rotatePieceBy(id: string, deltaRadians: number): void {
+    const piece = this.pieces.get(id);
+    if (!piece) return;
+    const twoPi = 2 * Math.PI;
+    piece.rotation = ((piece.rotation + deltaRadians) % twoPi + twoPi) % twoPi;
+  }
+
+  setPieceRotation(id: string, radians: number): void {
+    const piece = this.pieces.get(id);
+    if (!piece) return;
+    const twoPi = 2 * Math.PI;
+    piece.rotation = ((radians % twoPi) + twoPi) % twoPi;
+  }
+
+  rotatePiece90(id: string): void {
+    this.rotatePieceBy(id, Math.PI / 2);
   }
 }

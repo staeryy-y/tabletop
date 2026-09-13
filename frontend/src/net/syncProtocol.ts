@@ -18,7 +18,8 @@
 // redacted pile is indistinguishable from an ordinary face-down one to whoever receives
 // it, the same way a physical secret is "secure" only because no one hands it around.
 import { CardDef } from "../engine/card";
-import { CardInstance, PileState, TableModel } from "../engine/pileModel";
+import { CardInstance, PieceState, PileState, TableModel } from "../engine/pileModel";
+import { PieceDef } from "../engine/piece";
 
 export type TableRequest =
   | { type: "spawn"; def: CardDef; x: number; y: number }
@@ -43,6 +44,17 @@ export type TableRequest =
   | { type: "shuffle"; pileId: string }
   | { type: "draw-top"; pileId: string; offsetX: number; offsetY: number }
   | { type: "remove"; pileId: string }
+  /** Spawn a standalone Piece (TableModel.spawnPiece) — see engine/pileModel.ts's
+   * PieceState doc comment for how/why this is a wholly separate family of table
+   * object from Cards/Piles: no stacking, no flip, no hide, no merge-on-drop. */
+  | { type: "spawn-piece"; def: PieceDef; x: number; y: number }
+  /** A plain reposition — the *only* way a Piece ever changes position, since there's
+   * no pick-up-and-drop equivalent for something that never merges (see
+   * TableModel.movePiece). */
+  | { type: "move-piece"; pieceId: string; x: number; y: number }
+  | { type: "rotate-piece-by"; pieceId: string; deltaRadians: number }
+  | { type: "set-piece-rotation"; pieceId: string; radians: number }
+  | { type: "remove-piece"; pieceId: string }
   /** A coarse, throttled "here's roughly where I'm dragging this" update — purely
    * cosmetic, so other players see something moving during the gesture instead of it
    * teleporting on drop. Deliberately kept out of the touched/emitTouched machinery
@@ -63,7 +75,13 @@ export type TableRequest =
 export type TableEvent =
   | { type: "pile-upserted"; pile: PileState }
   | { type: "pile-removed"; pileId: string }
-  | { type: "snapshot"; piles: PileState[] }
+  | { type: "piece-upserted"; piece: PieceState }
+  | { type: "piece-removed"; pieceId: string }
+  /** `pieces` is optional (not just possibly-empty) purely so every pre-existing
+   * literal of this event (tests, older code) that only ever knew about piles keeps
+   * type-checking unchanged — see PeerTableSync.applyEvent's `?? []` and
+   * TableModel.loadSnapshot's matching default parameter. */
+  | { type: "snapshot"; piles: PileState[]; pieces?: PieceState[] }
   | { type: "drag-hint"; pileId: string; x: number; y: number; byPeerId: string }
   | { type: "rotate-hint"; pileId: string; radians: number; byPeerId: string }
   | { type: "cursor-hint"; x: number; y: number; byPeerId: string };
@@ -120,6 +138,7 @@ export class HostTableSync {
     }
 
     const touched = new Set<string>();
+    const touchedPieces = new Set<string>();
 
     switch (req.type) {
       case "spawn": {
@@ -183,9 +202,31 @@ export class HostTableSync {
         this.model.removePile(req.pileId);
         touched.add(req.pileId);
         break;
+      case "spawn-piece": {
+        const piece = this.model.spawnPiece(req.def, req.x, req.y);
+        touchedPieces.add(piece.id);
+        break;
+      }
+      case "move-piece":
+        this.model.movePiece(req.pieceId, req.x, req.y);
+        touchedPieces.add(req.pieceId);
+        break;
+      case "rotate-piece-by":
+        this.model.rotatePieceBy(req.pieceId, req.deltaRadians);
+        touchedPieces.add(req.pieceId);
+        break;
+      case "set-piece-rotation":
+        this.model.setPieceRotation(req.pieceId, req.radians);
+        touchedPieces.add(req.pieceId);
+        break;
+      case "remove-piece":
+        this.model.removePiece(req.pieceId);
+        touchedPieces.add(req.pieceId);
+        break;
     }
 
     this.emitTouched(touched);
+    this.emitTouchedPieces(touchedPieces);
   }
 
   /** Relayed as-is to everyone *except* the sender (who's already showing it locally,
@@ -208,11 +249,24 @@ export class HostTableSync {
     }
   }
 
+  /** Same idea as emitTouched, for Pieces — no per-recipient redaction needed, since a
+   * Piece has no Hide concept at all (see PieceState's doc comment), so every recipient
+   * gets the identical event. */
+  private emitTouchedPieces(pieceIds: Iterable<string>): void {
+    for (const pieceId of pieceIds) {
+      const piece = this.model.getPiece(pieceId);
+      for (const recipient of this.recipients()) {
+        this.broadcast(recipient, piece ? { type: "piece-upserted", piece } : { type: "piece-removed", pieceId });
+      }
+    }
+  }
+
   /** The full current state, redacted per-recipient — for a newly-joined peer, or
    * re-sent after a shuffle/host-migration-adjacent event. */
   sendSnapshotTo(recipientPeerId: string): void {
     const piles = this.model.allPiles().map((p) => redactPileFor(p, recipientPeerId));
-    this.broadcast(recipientPeerId, { type: "snapshot", piles });
+    const pieces = this.model.allPieces();
+    this.broadcast(recipientPeerId, { type: "snapshot", piles, pieces });
   }
 }
 
@@ -230,8 +284,14 @@ export class PeerTableSync {
       case "pile-removed":
         this.model.removePile(event.pileId);
         break;
+      case "piece-upserted":
+        this.model.setPiece(event.piece);
+        break;
+      case "piece-removed":
+        this.model.removePiece(event.pieceId);
+        break;
       case "snapshot":
-        this.model.loadSnapshot(event.piles);
+        this.model.loadSnapshot(event.piles, event.pieces ?? []);
         break;
       case "drag-hint":
       case "rotate-hint":
@@ -275,6 +335,21 @@ export class PeerTableSync {
   }
   remove(pileId: string): void {
     this.sendToHost({ type: "remove", pileId });
+  }
+  spawnPiece(def: PieceDef, x: number, y: number): void {
+    this.sendToHost({ type: "spawn-piece", def, x, y });
+  }
+  movePiece(pieceId: string, x: number, y: number): void {
+    this.sendToHost({ type: "move-piece", pieceId, x, y });
+  }
+  rotatePieceBy(pieceId: string, deltaRadians: number): void {
+    this.sendToHost({ type: "rotate-piece-by", pieceId, deltaRadians });
+  }
+  setPieceRotation(pieceId: string, radians: number): void {
+    this.sendToHost({ type: "set-piece-rotation", pieceId, radians });
+  }
+  removePiece(pieceId: string): void {
+    this.sendToHost({ type: "remove-piece", pieceId });
   }
   dragHint(pileId: string, x: number, y: number): void {
     this.sendToHost({ type: "drag-hint", pileId, x, y });

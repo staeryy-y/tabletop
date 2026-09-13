@@ -52,6 +52,15 @@ export interface PieceEntry {
 export interface PieceSet {
   key: string;
   entries: PieceEntry[];
+  /** Where this set's entries fan out from when the room first starts — the piece
+   * equivalent of CardSet.startX/startY, except a piece set has no single stack
+   * position of its own (pieces never merge — see docs/GAME_DEFINITION.md "Pieces"):
+   * this is just the anchor point individual entries are laid out around (see
+   * packages/startingLayout.ts's pieceEntryOffset). Undefined means "use the same
+   * auto-spread anchor the runtime always used" (defaultPieceSetPosition), so a package
+   * authored before this field existed still lays out the same way. */
+  startX?: number;
+  startY?: number;
 }
 
 export interface TrackDef {

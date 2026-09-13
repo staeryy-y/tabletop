@@ -5,11 +5,15 @@
 // dependency at all.
 import { describe, expect, it } from "vitest";
 import { CardDef } from "./card";
+import { PieceDef } from "./piece";
 import { TableModel } from "./pileModel";
 
 const DEF_A: CardDef = { id: "a", front: { title: "A", color: 0 }, back: { title: "", color: 0 } };
 const DEF_B: CardDef = { id: "b", front: { title: "B", color: 0 }, back: { title: "", color: 0 } };
 const DEF_C: CardDef = { id: "c", front: { title: "C", color: 0 }, back: { title: "", color: 0 } };
+
+const PIECE_A: PieceDef = { id: "pa", symbol: "♟" };
+const PIECE_B: PieceDef = { id: "pb", image: "data:image/png;base64,x" };
 
 describe("spawnCard", () => {
   it("creates a standalone pile of exactly one card, face-down and not hidden", () => {
@@ -532,5 +536,100 @@ describe("a realistic end-to-end scenario: deal, peek at own hand via hide, disc
     // the re-merged card keeps whatever hidden/faceUp state it had — merging doesn't
     // reset a card, only stacking position does
     expect(deck.cards[2].hiddenBy).toBe("me");
+  });
+});
+
+describe("loadSnapshot", () => {
+  it("replaces piles wholesale and defaults pieces to empty when omitted", () => {
+    const model = new TableModel();
+    model.spawnCard(DEF_A, 0, 0);
+    model.spawnPiece(PIECE_A, 0, 0);
+
+    model.loadSnapshot([{ id: "p1", x: 5, y: 6, rotation: 0, cards: [{ def: DEF_B, faceUp: false, hiddenBy: null }] }]);
+
+    expect(model.allPiles()).toEqual([{ id: "p1", x: 5, y: 6, rotation: 0, cards: [{ def: DEF_B, faceUp: false, hiddenBy: null }] }]);
+    expect(model.allPieces()).toEqual([]);
+  });
+
+  it("also replaces pieces wholesale when given", () => {
+    const model = new TableModel();
+    model.spawnPiece(PIECE_A, 0, 0);
+
+    model.loadSnapshot([], [{ id: "piece-x", x: 1, y: 2, rotation: 0, def: PIECE_B }]);
+
+    expect(model.allPieces()).toEqual([{ id: "piece-x", x: 1, y: 2, rotation: 0, def: PIECE_B }]);
+  });
+});
+
+describe("Pieces: spawnPiece/movePiece/rotatePiece*/removePiece — see docs/GAME_DEFINITION.md's Pieces section", () => {
+  it("spawnPiece creates a standalone piece with no rotation, distinct from any pile id", () => {
+    const model = new TableModel();
+    const piece = model.spawnPiece(PIECE_A, 10, 20);
+
+    expect(piece).toEqual({ id: piece.id, x: 10, y: 20, rotation: 0, def: PIECE_A });
+    expect(model.getPiece(piece.id)).toBe(piece);
+    expect(model.getPile(piece.id)).toBeUndefined();
+  });
+
+  it("gives every spawned piece a distinct id, in its own namespace from pile ids", () => {
+    const model = new TableModel();
+    const pileId = model.spawnCard(DEF_A, 0, 0).id;
+    const pieceIds = new Set(Array.from({ length: 20 }, () => model.spawnPiece(PIECE_A, 0, 0).id));
+    expect(pieceIds.size).toBe(20);
+    expect(pieceIds.has(pileId)).toBe(false);
+  });
+
+  it("movePiece repositions in place; a missing id is a silent no-op", () => {
+    const model = new TableModel();
+    const piece = model.spawnPiece(PIECE_A, 0, 0);
+    model.movePiece(piece.id, 30, 40);
+    expect(model.getPiece(piece.id)).toMatchObject({ x: 30, y: 40 });
+    expect(() => model.movePiece("ghost", 0, 0)).not.toThrow();
+  });
+
+  it("rotateBy accumulates and wraps into [0, 2π); setRotation sets it outright", () => {
+    const model = new TableModel();
+    const piece = model.spawnPiece(PIECE_A, 0, 0);
+    model.rotatePieceBy(piece.id, Math.PI);
+    model.rotatePieceBy(piece.id, Math.PI * 1.5);
+    expect(model.getPiece(piece.id)!.rotation).toBeCloseTo(Math.PI / 2);
+
+    model.setPieceRotation(piece.id, -Math.PI / 2);
+    expect(model.getPiece(piece.id)!.rotation).toBeCloseTo((3 * Math.PI) / 2);
+  });
+
+  it("rotatePiece90 is exactly rotateBy(π/2)", () => {
+    const model = new TableModel();
+    const piece = model.spawnPiece(PIECE_A, 0, 0);
+    model.rotatePiece90(piece.id);
+    expect(model.getPiece(piece.id)!.rotation).toBeCloseTo(Math.PI / 2);
+  });
+
+  it("setPiece inserts or overwrites by the id it already carries, without allocating a new one", () => {
+    const model = new TableModel();
+    model.setPiece({ id: "piece-remote", x: 1, y: 2, rotation: 0, def: PIECE_B });
+    expect(model.getPiece("piece-remote")).toEqual({ id: "piece-remote", x: 1, y: 2, rotation: 0, def: PIECE_B });
+  });
+
+  it("removePiece removes it from allPieces(); removing a nonexistent id does not throw", () => {
+    const model = new TableModel();
+    const piece = model.spawnPiece(PIECE_A, 0, 0);
+    model.removePiece(piece.id);
+    expect(model.getPiece(piece.id)).toBeUndefined();
+    expect(model.allPieces()).toHaveLength(0);
+    expect(() => model.removePiece("ghost")).not.toThrow();
+  });
+
+  it("pieces and piles coexist independently — acting on one never touches the other", () => {
+    const model = new TableModel();
+    const pile = model.spawnCard(DEF_A, 0, 0);
+    const piece = model.spawnPiece(PIECE_A, 0, 0);
+
+    model.movePiece(piece.id, 99, 99);
+    model.rotatePiece90(piece.id);
+
+    expect(model.getPile(pile.id)).toMatchObject({ x: 0, y: 0, rotation: 0 });
+    expect(model.allPiles()).toHaveLength(1);
+    expect(model.allPieces()).toHaveLength(1);
   });
 });

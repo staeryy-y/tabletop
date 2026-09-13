@@ -4,7 +4,7 @@
 // migration) is unit-testable without a canvas, matching this project's standing
 // practice of pulling anything PixiJS-independent out of table.ts. TableApp only ever
 // sees the two interfaces below.
-import { PileState, TableModel } from "../engine/pileModel";
+import { TableModel, TableSnapshot } from "../engine/pileModel";
 import { PeerLink } from "./peerLink";
 import { PeerLinkWithFallback } from "./peerLinkWithFallback";
 import { SignalingLike } from "./relayPeerLink";
@@ -176,17 +176,17 @@ export class RoomConnection {
   /** The current table state, suitable for the periodic recovery upload described in
    * docs/NETWORKING.md "Host migration" (app/signaling.py's `snapshot` message) — only
    * meaningful while this client is host. */
-  currentSnapshot(): PileState[] {
-    return this.model.allPiles();
+  currentSnapshot(): TableSnapshot {
+    return { piles: this.model.allPiles(), pieces: this.model.allPieces() };
   }
 
   /** This client was just promoted to host (docs/NETWORKING.md "Host migration"):
    * resume from the snapshot the old host had most recently uploaded (or start empty if
    * there wasn't one yet — a very short-lived room), then take on the host role for
    * whoever's still connected. */
-  becomeHostFromMigration(snapshot: PileState[] | null, remainingPeerIds: string[]): TableSyncClient {
-    this.model.loadSnapshot(snapshot ?? []);
-    this.view.applyEvent({ type: "snapshot", piles: this.model.allPiles() });
+  becomeHostFromMigration(snapshot: TableSnapshot | null, remainingPeerIds: string[]): TableSyncClient {
+    this.model.loadSnapshot(snapshot?.piles ?? [], snapshot?.pieces ?? []);
+    this.view.applyEvent({ type: "snapshot", piles: this.model.allPiles(), pieces: this.model.allPieces() });
     return this.becomeHost(remainingPeerIds);
   }
 

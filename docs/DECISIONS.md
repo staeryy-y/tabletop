@@ -359,3 +359,49 @@ purposefully replaces the old click-drag-to-pan gesture (WASD/Q/E already cover
 panning/rotating the camera — see engine/camera.ts): the camera can be rotated, so an
 axis-aligned rectangle only means "what's visually inside this box" in screen-space
 coordinates, not world-space ones.
+
+## D21 — Pieces are a separate object family from Cards, not a variant of Pile
+
+Pieces (`PieceSet`/`PieceEntry` in packages/gamePackage.ts) had existed in the package
+data model and editor since early on, but nothing ever turned one into an actual
+on-table object — a long-standing, repeatedly-noted gap. Closing it raised one real
+design choice: model a Piece as a `PileState` with a single, never-flippable,
+never-hideable card (reusing all the existing Pile/sync-protocol machinery), or give it
+its own, smaller, parallel model.
+
+Reuse lost to a dedicated `PieceState` (engine/pileModel.ts) with its own sync-protocol
+requests/events (`spawn-piece`/`move-piece`/`rotate-piece-by`/`set-piece-rotation`/
+`remove-piece`, `piece-upserted`/`piece-removed`) and rendering (engine/piece.ts,
+mirroring card.ts's image-loading/caching approach). The deciding factor is
+docs/GAME_DEFINITION.md's own framing: "the only thing that's different from a Card is
+the absence of stack/shuffle semantics once it's on the table" undersells it — a Piece
+also has no flip, no Hide, and (per that same doc) *never* merges with another Piece
+even on visual overlap, which is precisely the behavior `dropPile`'s merge-radius
+check exists to provide for Cards. Reusing PileState would mean either quietly
+disabling half of what makes a Pile a Pile (special-casing it everywhere: redaction,
+merge, flip, the multi-select group operations) or leaving those paths reachable for
+something the spec says should never do them. A parallel model needs more surface area
+(its own request/event variants, its own map in TableModel, its own render module) but
+none of it is conditional — every method that exists always applies, and nothing needs
+a runtime check for "is this actually a Piece."
+
+Consequences of the split, kept deliberately narrow for this first cut:
+- No per-recipient redaction for pieces at all (`emitTouchedPieces` in
+  syncProtocol.ts) — there's no Hide equivalent to redact.
+- No live drag-hint/rotate-hint preview for a Piece gesture (unlike a Card drag) — only
+  the final `move-piece`/`set-piece-rotation` request on release. Other players see a
+  piece jump to its final spot rather than glide, a minor cosmetic gap versus a Card's
+  smoother live preview, judged not worth the added protocol surface for a first cut.
+- Multi-select (D20) covers Cards only, per that feature's own explicit request
+  ("select multiple cards") — box-select doesn't consider pieceViews at all.
+- A package's `draw_pile: true` piece mode (GAME_DEFINITION.md: a face-down pile of
+  tiles a player draws from by hand, reusing shuffle/draw the same way a Card Stack
+  does) and connector-snapping placement aid are both still unbuilt — this decision
+  only closes "nothing spawns/renders a Piece at all," the simpler freeform-placement
+  case the spec also describes ("any player can pick it up, move it, and rotate it at
+  any time, same as a Card").
+- Each piece set's entries auto-fan out from a settable anchor point
+  (`PieceSet.startX/startY`, `packages/startingLayout.ts`'s `pieceEntryOffset`) the same
+  way an unpositioned card set falls back to an auto-spread default — but unlike
+  CardSet, the editor doesn't yet expose a drag-to-position control for that anchor
+  (that's the still-open "Layout tab" request, not solved by this decision).

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { CardDef } from "../engine/card";
-import { PileState } from "../engine/pileModel";
+import { TableSnapshot } from "../engine/pileModel";
+import { PieceDef } from "../engine/piece";
 import { TableApp } from "../engine/table";
 import { ChatDistributor, ChatMessage } from "../net/chatSync";
 import { PackageDistributor } from "../net/packageTransfer";
@@ -10,7 +11,7 @@ import { TableStore } from "../net/tableStore";
 import { createEmptyPackage, GamePackage } from "../packages/gamePackage";
 import { fetchBundledPackage } from "../packages/gameDefinitionLoader";
 import { PackageStore } from "../packages/packageStore";
-import { defaultCardSetPosition } from "../packages/startingLayout";
+import { defaultCardSetPosition, defaultPieceSetPosition, pieceEntryOffset } from "../packages/startingLayout";
 import { loadRoomToken } from "../roomToken";
 import { getRememberedRoomPackageId } from "../roomPackageChoice";
 import { Chat } from "./Chat";
@@ -61,6 +62,30 @@ function cardSetSpawnsFromPackage(pkg: GamePackage): CardSetSpawn[] {
       })),
     };
   });
+}
+
+/** One individual piece's worth of spawn info — unlike a card set, a piece set never
+ * spawns as a single combined object (see docs/GAME_DEFINITION.md "Pieces": pieces
+ * never merge into a stack), so this is flattened to one entry per piece, each with its
+ * own position, rather than kept per-set the way CardSetSpawn is. */
+interface PieceSpawn {
+  def: PieceDef;
+  x: number;
+  y: number;
+}
+
+function pieceSetSpawnsFromPackage(pkg: GamePackage): PieceSpawn[] {
+  const spawns: PieceSpawn[] = [];
+  pkg.pieceSets.forEach((set, i) => {
+    const fallback = defaultPieceSetPosition(i, pkg.pieceSets.length);
+    const anchorX = set.startX ?? fallback.x;
+    const anchorY = set.startY ?? fallback.y;
+    set.entries.forEach((entry, j) => {
+      const offset = pieceEntryOffset(j);
+      spawns.push({ def: { id: `${set.key}:${entry.id}`, image: entry.image, symbol: entry.symbol }, x: anchorX + offset.x, y: anchorY + offset.y });
+    });
+  });
+  return spawns;
 }
 
 const packageStore = new PackageStore();
@@ -132,8 +157,9 @@ export function RoomTable({ slug }: { slug: string }) {
     function seedStarterContentIfHost(loaded: GamePackage): void {
       if (seededRef.current.pkg || !roomConnRef.current?.isHost) return;
       seededRef.current.pkg = true;
-      const spawns = cardSetSpawnsFromPackage(loaded);
-      if (spawns.length === 0) {
+      const cardSpawns = cardSetSpawnsFromPackage(loaded);
+      const pieceSpawns = pieceSetSpawnsFromPackage(loaded);
+      if (cardSpawns.length === 0 && pieceSpawns.length === 0) {
         DEMO_DECK.forEach((def, i) => table.spawnCard(def, (i - 2.5) * 70, 150));
         return;
       }
@@ -141,8 +167,13 @@ export function RoomTable({ slug }: { slug: string }) {
       // role cards" — not N separate individual piles), at the position the package
       // author configured (or the same auto-spread default this project always used,
       // if they never touched it — see startingLayout.ts).
-      for (const spawn of spawns) {
+      for (const spawn of cardSpawns) {
         table.spawnStack(spawn.defs, spawn.startX, spawn.startY);
+      }
+      // Pieces never merge into a stack (docs/GAME_DEFINITION.md "Pieces"), so each one
+      // spawns as its own standalone object rather than grouped like a card set.
+      for (const spawn of pieceSpawns) {
+        table.spawnPiece(spawn.def, spawn.x, spawn.y);
       }
     }
 
@@ -152,14 +183,14 @@ export function RoomTable({ slug }: { slug: string }) {
 
     function persistSnapshotIfHost(): void {
       if (!roomConnRef.current?.isHost) return;
-      const piles = roomConnRef.current.currentSnapshot();
+      const snapshot = roomConnRef.current.currentSnapshot();
       // The server-side upload only matters for a *different* peer being promoted to
       // host later — an anonymous room's server state is never persisted at all
       // (D19), so there'd be nothing for that upload to accomplish. The local
       // IndexedDB save below always happens regardless — that's not a "server
       // upload," it's this browser remembering its own table.
-      if (!isAnonymousRoomRef.current) conn.send({ type: "snapshot", blob: piles });
-      void tableStore.save(slug, piles);
+      if (!isAnonymousRoomRef.current) conn.send({ type: "snapshot", blob: snapshot });
+      void tableStore.save(slug, snapshot.piles, snapshot.pieces);
     }
     const snapshotInterval = setInterval(persistSnapshotIfHost, SNAPSHOT_PERSIST_INTERVAL_MS);
     // Best-effort: also flush immediately when the tab is about to go away (reload,
@@ -292,7 +323,7 @@ export function RoomTable({ slug }: { slug: string }) {
       } else if (event.type === "you-are-host") {
         setHostId(mySelfId);
         if (!roomConnRef.current) return; // welcome always arrives first — see above
-        const serverSnapshot = (event.snapshot as PileState[] | null | undefined) ?? null;
+        const serverSnapshot = (event.snapshot as TableSnapshot | null | undefined) ?? null;
         (async () => {
           // Prefer this browser's own local copy over whatever the server last saw:
           // it's guaranteed to be exactly what this tab itself last showed (no upload
@@ -304,7 +335,7 @@ export function RoomTable({ slug }: { slug: string }) {
           const localSnapshot = await tableStore.load(slug);
           if (disposed || !roomConnRef.current) return;
           const snapshot = localSnapshot ?? serverSnapshot;
-          if (snapshot !== null && snapshot.length > 0) {
+          if (snapshot !== null && (snapshot.piles.length > 0 || snapshot.pieces.length > 0)) {
             // Resuming real content (from local storage, or a genuine peer migration
             // that already had state) — never inject starter content on top of it.
             // seedStarterContentIfHost's own flag only ever protects against seeding
@@ -422,6 +453,14 @@ export function RoomTable({ slug }: { slug: string }) {
             <strong>Right-click</strong> a card: flip, hide, rotate 90°, or (once stacked) shuffle/draw top.
           </p>
           <p>Drag the small handle above a card to rotate it freely. Drag one card onto another to stack them.</p>
+          <p>
+            <strong>Drag a box</strong> over empty table to select several cards, then move/rotate them together, or
+            right-click the selection to flip/hide all of them or collapse them into a deck.
+          </p>
+          <p>
+            Pieces (board tiles, standees) never stack — right-click one to rotate it 90° or remove it, or drag its
+            own handle to rotate it freely.
+          </p>
           <p>
             <strong>WASD</strong> pans the camera, <strong>Q/E</strong> rotates it — handy when players are seated
             on different sides of the table.

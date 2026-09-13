@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { CardDef } from "../engine/card";
 import { TableModel } from "../engine/pileModel";
+import { PieceDef } from "../engine/piece";
 import { PeerLink } from "./peerLink";
 import { PeerLinkFactory, RoomConnection, TableView } from "./roomConnection";
 import { TableEvent } from "./syncProtocol";
 
 const DEF_A: CardDef = { id: "a", front: { title: "A", color: 1 }, back: { title: "", color: 9 } };
+const PIECE_A: PieceDef = { id: "pa", symbol: "♟" };
 const DEF_B: CardDef = { id: "b", front: { title: "B", color: 2 }, back: { title: "", color: 9 } };
 
 /** An in-memory "network": lets two RoomConnections (playing the role of two real
@@ -203,7 +205,7 @@ describe("RoomConnection — host migration", () => {
     const conn = new RoomConnection(model, view, {} as never, "newhost");
 
     const snapshotPiles = [{ id: "p1", x: 1, y: 1, rotation: 0, cards: [] }];
-    const client = conn.becomeHostFromMigration(snapshotPiles, []);
+    const client = conn.becomeHostFromMigration({ piles: snapshotPiles, pieces: [] }, []);
 
     expect(model.allPiles()).toEqual(snapshotPiles);
     expect(view.events.some((e) => e.type === "snapshot")).toBe(true);
@@ -227,7 +229,7 @@ describe("RoomConnection — host migration", () => {
     const survivorView = new RecordingView();
     const survivorConn = new RoomConnection(new TableModel(), survivorView, {} as never, "survivor", net.linkFactory("survivor"));
 
-    conn.becomeHostFromMigration([], ["survivor"]);
+    conn.becomeHostFromMigration({ piles: [], pieces: [] }, ["survivor"]);
     survivorConn.becomePeerOf("newhost");
 
     expect(survivorView.events.some((e) => e.type === "snapshot")).toBe(true);
@@ -277,12 +279,14 @@ describe("RoomConnection — destroy", () => {
 });
 
 describe("RoomConnection — currentSnapshot", () => {
-  it("reflects the current model contents, for periodic recovery upload", () => {
+  it("reflects the current model's piles and pieces, for periodic recovery upload", () => {
     const model = new TableModel();
     const conn = new RoomConnection(model, new RecordingView(), {} as never, "host");
-    conn.becomeHost([]).sendRequest({ type: "spawn", def: DEF_A, x: 0, y: 0 });
+    const client = conn.becomeHost([]);
+    client.sendRequest({ type: "spawn", def: DEF_A, x: 0, y: 0 });
+    client.sendRequest({ type: "spawn-piece", def: PIECE_A, x: 1, y: 1 });
 
-    expect(conn.currentSnapshot()).toEqual(model.allPiles());
+    expect(conn.currentSnapshot()).toEqual({ piles: model.allPiles(), pieces: model.allPieces() });
   });
 });
 
@@ -309,7 +313,7 @@ describe("RoomConnection — side channels (net/packageTransfer.ts, net/chatSync
     expect(received).toEqual([{ fromPeerId: "alice", message: { type: "custom:ping", n: 1 } }]);
     // Definitely never reached table-sync interpretation as some bogus TableEvent —
     // the peer's view only ever saw its own real, expected connect-time snapshot.
-    expect(peerView.events).toEqual([{ type: "snapshot", piles: [] }]);
+    expect(peerView.events).toEqual([{ type: "snapshot", piles: [], pieces: [] }]);
   });
 
   it("two independently-registered side channels coexist without either seeing the other's messages", () => {

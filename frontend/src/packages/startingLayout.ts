@@ -13,3 +13,24 @@ export function defaultCardSetPosition(index: number, total: number): { x: numbe
   const spacing = 110;
   return { x: (index - (total - 1) / 2) * spacing, y: -150 };
 }
+
+/** Where a piece set's *anchor* point sits when nothing has explicitly repositioned it
+ * (see PieceSet.startX/startY) — on the opposite side of the table from
+ * defaultCardSetPosition's row, so freshly-spawned pieces and cards don't start on top
+ * of each other. Unlike a card set, a piece set has no single stack position of its
+ * own — see pieceEntryOffset for why individual entries still need their own distinct
+ * spot fanned out from this anchor. */
+export function defaultPieceSetPosition(index: number, total: number): { x: number; y: number } {
+  const spacing = 130;
+  return { x: (index - (total - 1) / 2) * spacing, y: 150 };
+}
+
+/** Individual pieces within a set fan out from the set's anchor point in a simple
+ * grid — pieces never merge into one shared stack the way a card set's entries do (see
+ * docs/GAME_DEFINITION.md "Pieces"), so each entry needs a distinct position of its
+ * own, not just one shared position. */
+export function pieceEntryOffset(entryIndex: number): { x: number; y: number } {
+  const columns = 4;
+  const spacing = 46;
+  return { x: (entryIndex % columns) * spacing, y: Math.floor(entryIndex / columns) * spacing };
+}

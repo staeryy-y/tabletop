@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { CardDef } from "../engine/card";
 import { TableModel } from "../engine/pileModel";
+import { PieceDef } from "../engine/piece";
 import { HostTableSync, PeerTableSync, TableEvent, redactPileFor } from "./syncProtocol";
 
 const DEF_A: CardDef = { id: "a", front: { title: "Secret Role: Evil", color: 1 }, back: { title: "", color: 9 } };
 const DEF_B: CardDef = { id: "b", front: { title: "B", color: 2 }, back: { title: "", color: 9 } };
+const PIECE_A: PieceDef = { id: "pa", symbol: "♟" };
 
 // --- redactPileFor ---
 
@@ -414,6 +416,71 @@ describe("HostTableSync — sendSnapshotTo", () => {
     sync.sendSnapshotTo("alice");
     expect(sent.every((s) => s.recipient === "alice")).toBe(true);
   });
+
+  it("also includes every current piece, unredacted (pieces have no hidden state)", () => {
+    const { model, sync, sent } = makeHost(["alice"]);
+    const piece = model.spawnPiece(PIECE_A, 3, 4);
+
+    sync.sendSnapshotTo("alice");
+
+    const event = sent[0].event;
+    expect(event.type).toBe("snapshot");
+    if (event.type === "snapshot") expect(event.pieces).toEqual([piece]);
+  });
+});
+
+describe("HostTableSync — pieces (spawn-piece/move-piece/rotate-piece-by/set-piece-rotation/remove-piece)", () => {
+  it("spawn-piece broadcasts the new piece to every recipient", () => {
+    const { sync, sent } = makeHost(["host", "alice"]);
+    sync.handleRequest("host", { type: "spawn-piece", def: PIECE_A, x: 1, y: 2 });
+
+    expect(sent).toHaveLength(2);
+    for (const s of sent) expect(s.event).toMatchObject({ type: "piece-upserted", piece: { x: 1, y: 2, def: PIECE_A } });
+  });
+
+  it("move-piece repositions and broadcasts", () => {
+    const { model, sync, sent } = makeHost(["host"]);
+    const piece = model.spawnPiece(PIECE_A, 0, 0);
+    sync.handleRequest("host", { type: "move-piece", pieceId: piece.id, x: 30, y: 40 });
+    expect(model.getPiece(piece.id)).toMatchObject({ x: 30, y: 40 });
+    expect(sent).toEqual([{ recipient: "host", event: { type: "piece-upserted", piece: { id: piece.id, x: 30, y: 40, rotation: 0, def: PIECE_A } } }]);
+  });
+
+  it("rotate-piece-by and set-piece-rotation update rotation and broadcast", () => {
+    const { model, sync, sent } = makeHost(["host"]);
+    const piece = model.spawnPiece(PIECE_A, 0, 0);
+    sync.handleRequest("host", { type: "rotate-piece-by", pieceId: piece.id, deltaRadians: 1 });
+    expect(model.getPiece(piece.id)!.rotation).toBeCloseTo(1);
+    sync.handleRequest("host", { type: "set-piece-rotation", pieceId: piece.id, radians: 2 });
+    expect(model.getPiece(piece.id)!.rotation).toBeCloseTo(2);
+    expect(sent.every((s) => s.event.type === "piece-upserted")).toBe(true);
+  });
+
+  it("remove-piece deletes it and broadcasts piece-removed", () => {
+    const { model, sync, sent } = makeHost(["host"]);
+    const piece = model.spawnPiece(PIECE_A, 0, 0);
+    sync.handleRequest("host", { type: "remove-piece", pieceId: piece.id });
+    expect(model.getPiece(piece.id)).toBeUndefined();
+    expect(sent).toEqual([{ recipient: "host", event: { type: "piece-removed", pieceId: piece.id } }]);
+  });
+
+  it("a mutation request for a nonexistent piece doesn't throw, and correctly reports it as absent", () => {
+    const { sync, sent } = makeHost(["host"]);
+    for (const req of [
+      { type: "move-piece" as const, pieceId: "ghost", x: 0, y: 0 },
+      { type: "rotate-piece-by" as const, pieceId: "ghost", deltaRadians: 1 },
+      { type: "set-piece-rotation" as const, pieceId: "ghost", radians: 1 },
+    ]) {
+      expect(() => sync.handleRequest("host", req)).not.toThrow();
+    }
+    expect(sent.every((s) => s.event.type === "piece-removed" && s.event.pieceId === "ghost")).toBe(true);
+  });
+
+  it("piece and pile requests never cross-contaminate each other's broadcasts", () => {
+    const { sync, sent } = makeHost(["host"]);
+    sync.handleRequest("host", { type: "spawn-piece", def: PIECE_A, x: 0, y: 0 });
+    expect(sent.every((s) => s.event.type === "piece-upserted")).toBe(true);
+  });
 });
 
 // --- PeerTableSync ---
@@ -449,6 +516,47 @@ describe("PeerTableSync — applying host events", () => {
 
     expect(model.getPile("stale")).toBeUndefined();
     expect(model.getPile("fresh")).toEqual(fresh);
+  });
+
+  it("snapshot with no pieces field leaves the model's pieces empty (older/test literals)", () => {
+    const model = new TableModel();
+    model.setPiece({ id: "stale-piece", x: 0, y: 0, rotation: 0, def: PIECE_A });
+    const sync = new PeerTableSync(model, () => {});
+
+    sync.applyEvent({ type: "snapshot", piles: [] });
+
+    expect(model.allPieces()).toEqual([]);
+  });
+
+  it("snapshot with pieces replaces them wholesale, same as piles", () => {
+    const model = new TableModel();
+    model.setPiece({ id: "stale-piece", x: 0, y: 0, rotation: 0, def: PIECE_A });
+    const sync = new PeerTableSync(model, () => {});
+    const fresh = { id: "fresh-piece", x: 7, y: 8, rotation: 0, def: PIECE_A };
+
+    sync.applyEvent({ type: "snapshot", piles: [], pieces: [fresh] });
+
+    expect(model.allPieces()).toEqual([fresh]);
+  });
+
+  it("piece-upserted upserts into the local model", () => {
+    const model = new TableModel();
+    const sync = new PeerTableSync(model, () => {});
+    const piece = { id: "pc1", x: 1, y: 2, rotation: 0, def: PIECE_A };
+
+    sync.applyEvent({ type: "piece-upserted", piece });
+
+    expect(model.getPiece("pc1")).toEqual(piece);
+  });
+
+  it("piece-removed deletes from the local model", () => {
+    const model = new TableModel();
+    model.setPiece({ id: "pc1", x: 0, y: 0, rotation: 0, def: PIECE_A });
+    const sync = new PeerTableSync(model, () => {});
+
+    sync.applyEvent({ type: "piece-removed", pieceId: "pc1" });
+
+    expect(model.getPiece("pc1")).toBeUndefined();
   });
 
   it("drag-hint is a no-op on the local model — it's cosmetic only", () => {
@@ -551,6 +659,22 @@ describe("PeerTableSync — sending requests to the host", () => {
     const { sync, requests } = makePeer();
     sync.cursorHint(5, 6);
     expect(requests).toEqual([{ type: "cursor-hint", x: 5, y: 6 }]);
+  });
+
+  it("spawnPiece, movePiece, rotatePieceBy, setPieceRotation, removePiece", () => {
+    const { sync, requests } = makePeer();
+    sync.spawnPiece(PIECE_A, 1, 2);
+    sync.movePiece("pc1", 3, 4);
+    sync.rotatePieceBy("pc1", 0.5);
+    sync.setPieceRotation("pc1", 1.2);
+    sync.removePiece("pc1");
+    expect(requests).toEqual([
+      { type: "spawn-piece", def: PIECE_A, x: 1, y: 2 },
+      { type: "move-piece", pieceId: "pc1", x: 3, y: 4 },
+      { type: "rotate-piece-by", pieceId: "pc1", deltaRadians: 0.5 },
+      { type: "set-piece-rotation", pieceId: "pc1", radians: 1.2 },
+      { type: "remove-piece", pieceId: "pc1" },
+    ]);
   });
 });
 

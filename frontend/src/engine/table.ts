@@ -12,7 +12,8 @@ import { CameraInput, NO_CAMERA_INPUT, stepCamera } from "./camera";
 import { CARD_HEIGHT, CARD_WIDTH, CardDef, renderCard } from "./card";
 import { TableSyncClient, TableView } from "../net/roomConnection";
 import { TableEvent } from "../net/syncProtocol";
-import { PileState, TableModel } from "./pileModel";
+import { PieceState, PileState, TableModel } from "./pileModel";
+import { PieceDef, PIECE_SIZE, renderPiece } from "./piece";
 import { computeSeatPositions } from "./seating";
 
 // Pixel-art visual theme (docs/ARCHITECTURE.md "Visual style", D12): every texture
@@ -98,6 +99,14 @@ export class TableApp implements TableView {
   private syncClient: TableSyncClient | null = null;
   private views = new Map<string, Container>();
   private faceLayers = new Map<string, Container>();
+  /** Pieces (docs/GAME_DEFINITION.md "Pieces") are rendered/tracked in their own,
+   * entirely separate maps from views/faceLayers above — not because the ids could
+   * ever collide (they can't: "pile-N" vs. "piece-N", see pileModel.ts), but so
+   * card-specific logic (redraw()'s renderCard, box-select's iteration over `views`)
+   * never has to special-case "unless it's actually a piece." Multi-select (box-select
+   * and the group operations) deliberately covers piles/cards only, per the explicit
+   * request that introduced it — pieces aren't included in a box-select. */
+  private pieceViews = new Map<string, Container>();
   /** `localFloating` is only ever set when there's no syncClient (a bare, room-less
    * sandbox): it's the actual detached PileState pickUpTop() returned, mutated in place
    * as the pointer moves and handed to dropPile() on release — exactly the pre-M6
@@ -138,6 +147,14 @@ export class TableApp implements TableView {
    * dragging it is what starts a group rotate (see makeGroupRotateHandle). Absent
    * (null) whenever fewer than 2 piles are selected; see updateGroupHandle. */
   private groupHandle: Container | null = null;
+  /** Dragging/rotating a Piece — deliberately much simpler than the card-pile
+   * equivalents (`dragging`/`rotating`): there's no split-on-pickup, no
+   * merge-on-drop, and (for now) no live drag-hint/rotate-hint preview for other
+   * players — a Piece gesture only ever produces one final "move-piece"/
+   * "set-piece-rotation" request on release. See TableModel.movePiece's doc comment
+   * for why a Piece drag can be this much simpler than a card pile's. */
+  private draggingPiece: { pieceId: string; view: Container } | null = null;
+  private rotatingPiece: { pieceId: string; view: Container; radians: number } | null = null;
   /** Last time (performance.now()) this client sent a drag-hint — see
    * HINT_INTERVAL_MS. Reset to 0 at the start of each synced drag so the very
    * first move sends immediately rather than waiting out the throttle. */
@@ -247,11 +264,25 @@ export class TableApp implements TableView {
     } else if (event.type === "pile-removed") {
       this.model.removePile(event.pileId);
       this.removeView(event.pileId);
+    } else if (event.type === "piece-upserted") {
+      this.model.setPiece(event.piece);
+      const view = this.pieceViews.get(event.piece.id);
+      if (view) {
+        view.position.set(event.piece.x, event.piece.y);
+        view.rotation = event.piece.rotation;
+      } else {
+        this.mountPieceView(event.piece);
+      }
+    } else if (event.type === "piece-removed") {
+      this.model.removePiece(event.pieceId);
+      this.removePieceView(event.pieceId);
     } else if (event.type === "snapshot") {
       for (const pileId of [...this.views.keys()]) this.removeView(pileId);
+      for (const pieceId of [...this.pieceViews.keys()]) this.removePieceView(pieceId);
       this.clearSelection(); // ids from before a resumed/migrated snapshot may not exist any more
-      this.model.loadSnapshot(event.piles);
+      this.model.loadSnapshot(event.piles, event.pieces ?? []);
       for (const pile of event.piles) this.mountView(pile);
+      for (const piece of event.pieces ?? []) this.mountPieceView(piece);
     } else if (event.type === "drag-hint") {
       // Purely cosmetic (see syncProtocol.ts's TableEvent doc comment): moves the view
       // to roughly where someone else is dragging it, without touching the model at
@@ -421,6 +452,16 @@ export class TableApp implements TableView {
     }
   }
 
+  /** Spawn a standalone Piece (docs/GAME_DEFINITION.md "Pieces") — same
+   * syncClient-or-local-model dispatch pattern as spawnCard/spawnStack above. */
+  spawnPiece(def: PieceDef, worldX: number, worldY: number): void {
+    if (this.syncClient) {
+      this.syncClient.sendRequest({ type: "spawn-piece", def, x: worldX, y: worldY });
+    } else {
+      this.mountPieceView(this.model.spawnPiece(def, worldX, worldY));
+    }
+  }
+
   /** A static reference marker — see TABLE_BACKGROUND_*'s doc comment — drawn once at
    * init() and never redrawn (it doesn't represent any model state, so there's nothing
    * to keep in sync). */
@@ -522,6 +563,116 @@ export class TableApp implements TableView {
     // stay selected — its outline lived on `view`, which is now gone too.
     this.selectionOutlines.delete(pileId);
     this.deselect(pileId);
+  }
+
+  // --- Wiring a PieceState to an on-screen Container — see PieceState's own doc
+  // comment for how/why this is a wholly separate, simpler family of object from
+  // Piles/Cards above: no flip, no hide, no stack/merge, so there's much less
+  // interaction to wire up than mountView. ---
+
+  private mountPieceView(piece: PieceState): Container {
+    const view = new Container();
+    view.position.set(piece.x, piece.y);
+    view.rotation = piece.rotation;
+    view.eventMode = "static";
+    view.cursor = "grab";
+    view.on("pointerdown", (e: FederatedPointerEvent) => {
+      e.stopPropagation();
+      if (e.button === 2) return; // handled by rightclick below
+      this.beginDragPiece(piece.id, e);
+    });
+    view.on("rightclick", (e: FederatedPointerEvent) => {
+      e.stopPropagation();
+      this.openPieceMenu(piece.id, e.globalX, e.globalY);
+    });
+
+    const faceLayer = new Container();
+    renderPiece(faceLayer, piece.def);
+    view.addChild(faceLayer);
+    view.addChild(this.makePieceRotateHandle(piece.id));
+
+    this.world.addChild(view);
+    this.pieceViews.set(piece.id, view);
+    return view;
+  }
+
+  private makePieceRotateHandle(pieceId: string): Container {
+    const handle = new Graphics();
+    handle.circle(0, -(PIECE_SIZE / 2 + 12), 5);
+    handle.fill({ color: 0xffffff, alpha: 0.6 });
+    handle.stroke({ width: 1, color: 0x1a1a1a });
+    handle.eventMode = "static";
+    handle.cursor = "grab";
+    handle.on("pointerdown", (e: FederatedPointerEvent) => {
+      e.stopPropagation();
+      const view = this.pieceViews.get(pieceId);
+      if (view) this.rotatingPiece = { pieceId, view, radians: view.rotation };
+    });
+    return handle;
+  }
+
+  private beginDragPiece(pieceId: string, e: FederatedPointerEvent): void {
+    if (this.draggingPiece) return;
+    const view = this.pieceViews.get(pieceId);
+    if (!view) return;
+    this.draggingPiece = { pieceId, view };
+    view.alpha = 0.85;
+    view.zIndex = 1000;
+  }
+
+  private removePieceView(pieceId: string): void {
+    const view = this.pieceViews.get(pieceId);
+    if (view) {
+      this.world.removeChild(view);
+      this.pieceViews.delete(pieceId);
+    }
+  }
+
+  private doRemovePiece(pieceId: string): void {
+    if (this.syncClient) {
+      this.syncClient.sendRequest({ type: "remove-piece", pieceId });
+      return;
+    }
+    this.model.removePiece(pieceId);
+    this.removePieceView(pieceId);
+  }
+
+  private rotatePiece90(pieceId: string): void {
+    if (this.syncClient) {
+      this.syncClient.sendRequest({ type: "rotate-piece-by", pieceId, deltaRadians: Math.PI / 2 });
+      return;
+    }
+    this.model.rotatePiece90(pieceId);
+    const piece = this.model.getPiece(pieceId);
+    const view = this.pieceViews.get(pieceId);
+    if (piece && view) view.rotation = piece.rotation;
+  }
+
+  /** The right-click menu for a Piece — just rotate/remove, since a Piece has no
+   * flip/hide/shuffle/draw concept at all (see PieceState's doc comment) — much
+   * shorter than openMenu's card equivalent below. */
+  private openPieceMenu(pieceId: string, screenX: number, screenY: number): void {
+    this.closeMenu();
+    const menu = document.createElement("div");
+    menu.className = "card-menu";
+    menu.style.left = `${screenX}px`;
+    menu.style.top = `${screenY}px`;
+
+    const items: [string, () => void][] = [
+      ["Rotate 90°", () => this.rotatePiece90(pieceId)],
+      ["Remove", () => this.doRemovePiece(pieceId)],
+    ];
+    for (const [label, action] of items) {
+      const btn = document.createElement("button");
+      btn.textContent = label;
+      btn.onclick = () => {
+        action();
+        this.closeMenu();
+      };
+      menu.appendChild(btn);
+    }
+    document.body.appendChild(menu);
+    this.menuEl = menu;
   }
 
   // --- Multi-select: box-select a rectangle of piles, then move/rotate/flip/hide/
@@ -819,6 +970,12 @@ export class TableApp implements TableView {
       } else {
         this.maybeSendDragHint(this.dragging.pileId, local.x, local.y);
       }
+    } else if (this.rotatingPiece) {
+      const angle = Math.atan2(local.x - this.rotatingPiece.view.position.x, -(local.y - this.rotatingPiece.view.position.y));
+      this.rotatingPiece.radians = angle;
+      this.rotatingPiece.view.rotation = angle;
+    } else if (this.draggingPiece) {
+      this.draggingPiece.view.position.set(local.x, local.y);
     }
   }
 
@@ -894,6 +1051,22 @@ export class TableApp implements TableView {
       this.rotating = null;
       if (this.syncClient) this.syncClient.sendRequest({ type: "set-rotation", pileId, radians });
       // else: onPointerMove already applied it directly to the model as it moved.
+    }
+
+    if (this.rotatingPiece) {
+      const { pieceId, radians } = this.rotatingPiece;
+      this.rotatingPiece = null;
+      if (this.syncClient) this.syncClient.sendRequest({ type: "set-piece-rotation", pieceId, radians });
+      else this.model.setPieceRotation(pieceId, radians);
+    }
+
+    if (this.draggingPiece) {
+      const { pieceId, view } = this.draggingPiece;
+      this.draggingPiece = null;
+      view.alpha = 1;
+      const { x, y } = view.position;
+      if (this.syncClient) this.syncClient.sendRequest({ type: "move-piece", pieceId, x, y });
+      else this.model.movePiece(pieceId, x, y);
     }
 
     if (!this.dragging) return;

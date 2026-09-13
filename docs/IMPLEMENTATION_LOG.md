@@ -123,10 +123,40 @@ that touched this log.
   new stack (`TableModel.collapseIntoStack`, a new sync request, landing at the group's
   centroid under a fresh id). Replaces the old click-drag-to-pan gesture — WASD/Q/E
   already cover camera movement.
+- Pieces are spawned and rendered on the table (D21), closing a long-standing gap.
+  Modeled as their own `PieceState` (`engine/pileModel.ts`), deliberately separate from
+  Pile/Card — no flip, no hide, no stack/merge-on-drop, matching
+  docs/GAME_DEFINITION.md "Pieces": a pawn overlapping a tile is just a visual overlap,
+  never a combined object. New sync-protocol requests/events
+  (`spawn-piece`/`move-piece`/`rotate-piece-by`/`set-piece-rotation`/`remove-piece`,
+  `piece-upserted`/`piece-removed`) and rendering (`engine/piece.ts`, an image or a
+  short emoji/text symbol, round rather than a card's rounded-rect so the two families
+  read as visually distinct). A room's own piece sets spawn automatically when it
+  starts, one standalone piece per entry (never grouped into a stack the way a card
+  set's entries are), fanned out from a settable anchor point
+  (`PieceSet.startX/startY`, falling back to an auto-spread default —
+  `packages/startingLayout.ts`). Right-click a piece to rotate it 90° or remove it; drag
+  its own handle to rotate it freely, same as a card. Host-reload persistence
+  (`net/tableStore.ts`) and host-migration recovery (`net/roomConnection.ts`) both
+  carry pieces alongside piles now (`TableSnapshot`); an older browser's saved
+  pre-pieces snapshot (a bare piles array) is transparently upgraded on load rather than
+  discarded. Not covered by this: `draw_pile`/connector-snapping (see D21), multi-select
+  (Cards only, per that feature's own explicit request), and a visual
+  drag-to-position editor control for a piece set's anchor (card sets already have one;
+  see the "Layout tab" gap below).
 
 ## Known gaps / open feedback
 
 Newest first. Fixed items move to "Implemented" above with a note here of what changed.
+
+- **(Fixed)** Pieces are now spawned and rendered on the table (D21) — a dedicated
+  object family, not a variant of Pile/Card (no flip, no hide, no merge-on-drop) — see
+  "Implemented" above. **Still not covered** by this fix: a package's `draw_pile: true`
+  face-down-pile piece mode and connector-snapping (both in docs/GAME_DEFINITION.md
+  "Pieces" but not yet in `PieceSet`/`PieceEntry`'s actual fields), and the editor still
+  has no drag-to-position control for a piece set's layout anchor the way
+  `StartingLayoutPreview` gives card sets (see the "Layout tab" item below, which this
+  was blocking).
 
 - **(Fixed)** Multi-select — box-select several piles, then move/rotate-around-centroid/
   flip/hide/collapse-into-a-deck them together (D20) — see "Implemented" above.
@@ -206,23 +236,17 @@ Newest first. Fixed items move to "Implemented" above with a note here of what c
   shapes/colors, not actual sprite assets, since nothing in this environment can author
   real pixel-art images; and the integer-zoom-snapping refinement ARCHITECTURE.md itself
   calls "a nice-to-have, not required."
-- **(Not started, newly noticed while fixing card images) Pieces are never spawned or
-  rendered on the table at all.** `PieceSet`/`PieceEntry` exist in the package data model
-  and editor (`GamePackageEditor.tsx`), but nothing in `table.ts`/`RoomTable.tsx` ever
-  turns one into an on-table object the way `cardDefsFromPackage`/`spawnCard` do for
-  cards — nothing to spawn, place, or render, image or otherwise. A real gap for any
-  game whose board is pieces rather than cards (tiles, tokens, a Betrayal-style board).
-  This also blocks the "Layout tab" item directly below from being meaningful for
-  pieces specifically, since there's nothing yet to lay out onto the table.
-
 - **(Not started)** The game-package editor was explicitly requested to be restructured
   into one tab per element (cards, pieces, tracks, dice, macros) plus a final "Layout"
   tab for arranging every piece's/card set's spawn position in one place. What actually
   shipped instead (see "Implemented" above) is narrower: card sets gained a
   label/position and a draggable `StartingLayoutPreview`, but it's still embedded inside
-  the existing single continuously-scrolling editor, not a real tabbed layout, and
-  doesn't cover pieces (blocked on the gap above) or a unified cross-element "Layout"
-  view.
+  the existing single continuously-scrolling editor, not a real tabbed layout. Piece
+  sets now have the same kind of position field (`PieceSet.startX/startY`, D21) with a
+  sensible auto-fan-out default, but — unlike card sets — nothing in the editor lets a
+  GM drag that position visually yet; a package author can only get the auto-placed
+  default today. A unified cross-element "Layout" view covering both families in one
+  tab is still unbuilt.
 
 ## Explicitly out of scope for v1 (see PLAN.md, unchanged)
 
