@@ -150,10 +150,24 @@ that touched this log.
   one `UI_TEXT` object, nested by component, rather than a literal inline in component
   code. Purely a refactor (no wording changed): the point is to make every piece of
   copy reachable and rewritable from one file.
+- "+ Add card"/"+ Add piece" open an in-page modal to fill in the new entry's details
+  before it's created, instead of dropping a blank tile into the grid to edit
+  afterward (D23) — `GamePackageEditor.tsx`'s `Modal`/`NewCardModal`/`NewPieceModal`.
+  Editing an *existing* tile is unchanged (still inline in the grid); only the
+  creation step moved into a dialog, per the explicit request.
+- WASD panning direction bug fixed (D24) — W was moving the camera backward and A the
+  wrong way, on both axes; `engine/camera.ts`'s `stepCamera` had all four pan
+  directions inverted relative to how `engine/table.ts` actually applies the result.
 
 ## Known gaps / open feedback
 
 Newest first. Fixed items move to "Implemented" above with a note here of what changed.
+
+- **(Fixed)** WASD pan was backwards on both axes (D24) — caught by a user "by feel,"
+  not by reading the code; see "Implemented" above.
+
+- **(Fixed)** "+ Add card"/"+ Add piece" now open a modal to fill in the new entry
+  before it's created (D23) — see "Implemented" above.
 
 - **(Fixed)** Pieces are now spawned and rendered on the table (D21) — a dedicated
   object family, not a variant of Pile/Card (no flip, no hide, no merge-on-drop) — see

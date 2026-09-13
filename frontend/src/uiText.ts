@@ -160,6 +160,15 @@ export const UI_TEXT = {
       remove: "Remove",
       addCard: "+ Add card",
       newCardDefaultTitle: "New Card",
+      // The "+ Add card" button opens this modal to fill in the new card's details,
+      // rather than dropping a blank tile straight into the grid — see the explicit
+      // request in docs/DECISIONS.md D23.
+      modalTitle: "New card",
+      modalTitleLabel: "Title",
+      modalTitlePlaceholder: "title (or blank for image-only)",
+      modalTextLabel: "Body text (optional)",
+      modalImageLabel: "Image (optional)",
+      createButton: "Create card",
     },
 
     pieceSets: {
@@ -176,6 +185,12 @@ export const UI_TEXT = {
       remove: "Remove",
       addPiece: "+ Add piece",
       newPieceDefaultSymbol: "⭐",
+      // Same modal-on-create treatment as cardEntries, above.
+      modalTitle: "New piece",
+      modalSymbolLabel: "Symbol/emoji",
+      modalImageLabel: "Image (optional, instead of a symbol)",
+      modalConnectorsLabel: "Connectors (optional)",
+      createButton: "Create piece",
     },
 
     macros: {

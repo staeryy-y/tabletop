@@ -45,12 +45,21 @@ export function stepCamera(
   panSpeed: number,
   rotateSpeed: number,
 ): CameraState {
+  // The returned (x, y) is applied directly as the world container's on-screen
+  // position (table.ts's tickCamera) — the table sprite slides under a fixed
+  // viewport, rather than a separate "camera" position being tracked and negated.
+  // So moving "forward" (W, toward what's further up the table) must *increase*
+  // world.position.y — sliding the table down so more of what's above comes into
+  // view — not decrease it (which would slide the table up, revealing what's below:
+  // backward). Was inverted on all four directions until a user caught it by feel
+  // ("W goes backwards, same with A") — direction bugs like this are easy to get
+  // backwards on paper and only actually notice by using the controls.
   let dx = 0;
   let dy = 0;
-  if (input.up) dy -= 1;
-  if (input.down) dy += 1;
-  if (input.left) dx -= 1;
-  if (input.right) dx += 1;
+  if (input.up) dy += 1;
+  if (input.down) dy -= 1;
+  if (input.left) dx += 1;
+  if (input.right) dx -= 1;
   const magnitude = Math.hypot(dx, dy);
   if (magnitude > 0) {
     dx /= magnitude;

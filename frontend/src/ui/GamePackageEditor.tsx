@@ -1,4 +1,4 @@
-import { useRef, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import {
   CardEntry,
   CardSet,
@@ -87,6 +87,30 @@ function Section({ title, children }: { title: string; children: preact.Componen
       <legend>{title}</legend>
       {children}
     </fieldset>
+  );
+}
+
+/** A plain in-page overlay dialog (not a browser window) — used for filling in a new
+ * card/piece's details before it's added, rather than dropping a blank tile straight
+ * into the grid (see the explicit request in docs/DECISIONS.md D23). Closes on Escape
+ * or a click on the backdrop, same as the existing right-click card menu's
+ * click-outside-to-close behavior (engine/table.ts's closeMenu). */
+function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: preact.ComponentChildren }) {
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  return (
+    <div class="modal-overlay" onClick={onClose}>
+      <div class="modal" onClick={(e) => e.stopPropagation()}>
+        <h3>{title}</h3>
+        {children}
+      </div>
+    </div>
   );
 }
 
@@ -277,13 +301,64 @@ function StartingLayoutPreview({ cardSets, onMove }: { cardSets: CardSet[]; onMo
   );
 }
 
+/** The "+ Add card" modal — fills in a new card's details before it's added to the
+ * grid, rather than dropping a blank tile in and editing it in place (D23). Mirrors
+ * exactly what an existing tile lets you edit (title, body text, image) — nothing new,
+ * just asked for up front instead of after the fact. */
+function NewCardModal({ onCreate, onCancel }: { onCreate: (entry: CardEntry) => void; onCancel: () => void }) {
+  const t = T.cardEntries;
+  const [title, setTitle] = useState("");
+  const [text, setText] = useState("");
+  const [image, setImage] = useState<string | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function uploadImage(file: File | undefined) {
+    if (!file) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setImage(await readImageAsDataUrl(file));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : T.readImageFailedFallback);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function create() {
+    onCreate({ id: freshId("card"), front: { title: title.trim() || t.newCardDefaultTitle, text: text.trim() || undefined, image } });
+  }
+
+  return (
+    <Modal title={t.modalTitle} onClose={onCancel}>
+      <label>
+        {t.modalTitleLabel}
+        <input value={title} placeholder={t.modalTitlePlaceholder} onInput={(e) => setTitle((e.target as HTMLInputElement).value)} autofocus />
+      </label>
+      <label>
+        {t.modalTextLabel}
+        <input value={text} onInput={(e) => setText((e.target as HTMLInputElement).value)} />
+      </label>
+      <label>
+        {t.modalImageLabel}
+        <input type="file" accept="image/*" onChange={(e) => uploadImage((e.target as HTMLInputElement).files?.[0])} />
+      </label>
+      {busy && <span class="hint">{t.readingHint}</span>}
+      {error && <p class="error">{error}</p>}
+      <div class="modal-actions">
+        <button onClick={onCancel}>{T.cancel}</button>
+        <button onClick={create}>{t.createButton}</button>
+      </div>
+    </Modal>
+  );
+}
+
 function CardEntriesEditor({ entries, onChange }: { entries: CardEntry[]; onChange: (e: CardEntry[]) => void }) {
   const t = T.cardEntries;
   const [busy, setBusy] = useState<string | null>(null);
+  const [showNewCard, setShowNewCard] = useState(false);
 
-  function add() {
-    onChange([...entries, { id: freshId("card"), front: { title: t.newCardDefaultTitle } }]);
-  }
   function update(i: number, patch: Partial<CardEntry["front"]>) {
     onChange(entries.map((e, idx) => (idx === i ? { ...e, front: { ...e.front, ...patch } } : e)));
   }
@@ -333,7 +408,16 @@ function CardEntriesEditor({ entries, onChange }: { entries: CardEntry[]; onChan
           </div>
         ))}
       </div>
-      <button onClick={add}>{t.addCard}</button>
+      <button onClick={() => setShowNewCard(true)}>{t.addCard}</button>
+      {showNewCard && (
+        <NewCardModal
+          onCreate={(entry) => {
+            onChange([...entries, entry]);
+            setShowNewCard(false);
+          }}
+          onCancel={() => setShowNewCard(false)}
+        />
+      )}
     </div>
   );
 }
@@ -367,13 +451,78 @@ function PieceSetsEditor({ pieceSets, onChange }: { pieceSets: PieceSet[]; onCha
   );
 }
 
+/** The "+ Add piece" modal — same idea as NewCardModal above, for a piece's fields
+ * (symbol/image, connectors) instead of a card's. */
+function NewPieceModal({ onCreate, onCancel }: { onCreate: (entry: PieceEntry) => void; onCancel: () => void }) {
+  const t = T.pieceEntries;
+  const [symbol, setSymbol] = useState(t.newPieceDefaultSymbol);
+  const [image, setImage] = useState<string | undefined>(undefined);
+  const [connectorsText, setConnectorsText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function uploadImage(file: File | undefined) {
+    if (!file) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setImage(await readImageAsDataUrl(file));
+      setSymbol("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : T.readImageFailedFallback);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function create() {
+    const connectors = connectorsText.split(",").map((s) => s.trim()).filter(Boolean);
+    onCreate({
+      id: freshId("piece"),
+      symbol: image ? undefined : symbol || t.newPieceDefaultSymbol,
+      image,
+      connectors: connectors.length ? connectors : undefined,
+    });
+  }
+
+  return (
+    <Modal title={t.modalTitle} onClose={onCancel}>
+      <label>
+        {t.modalSymbolLabel}
+        <input
+          value={symbol}
+          placeholder={t.symbolPlaceholder}
+          maxLength={4}
+          onInput={(e) => {
+            setSymbol((e.target as HTMLInputElement).value);
+            setImage(undefined);
+          }}
+          autofocus
+        />
+      </label>
+      <label>
+        {t.modalImageLabel}
+        <input type="file" accept="image/*" onChange={(e) => uploadImage((e.target as HTMLInputElement).files?.[0])} />
+      </label>
+      <label>
+        {t.modalConnectorsLabel}
+        <input value={connectorsText} placeholder={t.connectorsPlaceholder} onInput={(e) => setConnectorsText((e.target as HTMLInputElement).value)} />
+      </label>
+      {busy && <span class="hint">{t.readingHint}</span>}
+      {error && <p class="error">{error}</p>}
+      <div class="modal-actions">
+        <button onClick={onCancel}>{T.cancel}</button>
+        <button onClick={create}>{t.createButton}</button>
+      </div>
+    </Modal>
+  );
+}
+
 function PieceEntriesEditor({ entries, onChange }: { entries: PieceEntry[]; onChange: (e: PieceEntry[]) => void }) {
   const t = T.pieceEntries;
   const [busy, setBusy] = useState<string | null>(null);
+  const [showNewPiece, setShowNewPiece] = useState(false);
 
-  function add() {
-    onChange([...entries, { id: freshId("piece"), symbol: t.newPieceDefaultSymbol }]);
-  }
   function update(i: number, patch: Partial<PieceEntry>) {
     onChange(entries.map((e, idx) => (idx === i ? { ...e, ...patch } : e)));
   }
@@ -425,7 +574,16 @@ function PieceEntriesEditor({ entries, onChange }: { entries: PieceEntry[]; onCh
           </div>
         ))}
       </div>
-      <button onClick={add}>{t.addPiece}</button>
+      <button onClick={() => setShowNewPiece(true)}>{t.addPiece}</button>
+      {showNewPiece && (
+        <NewPieceModal
+          onCreate={(entry) => {
+            onChange([...entries, entry]);
+            setShowNewPiece(false);
+          }}
+          onCancel={() => setShowNewPiece(false)}
+        />
+      )}
     </div>
   );
 }

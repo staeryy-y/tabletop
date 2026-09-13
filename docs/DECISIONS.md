@@ -430,3 +430,35 @@ Not extracted: CSS class names, HTML attribute values that aren't prose (`type="
 suffix), and console-only error logging (`console.error` calls no one but a developer
 ever sees) — none of that reads as "written" text a person would want to rewrite for
 voice, so extracting it would just add noise without serving the actual goal.
+
+## D23 — "+ Add card"/"+ Add piece" opens a modal, not a blank tile to fill in after
+
+Previously, clicking "+ Add card" (or "+ Add piece") immediately appended a
+default-titled blank entry to the grid, which the author then edited in place. Per
+explicit feedback ("it should pop up a new virtual window/prompt... where the user
+fills in the details of the card"), both buttons now open an in-page modal dialog
+(`GamePackageEditor.tsx`'s `Modal`/`NewCardModal`/`NewPieceModal` — a `position: fixed`
+overlay, not an actual browser window) where the author fills in the new entry's
+fields before it's added at all; Cancel or Escape discards it with nothing added to the
+package. The modal's fields are exactly what an existing tile already let you edit —
+title/body-text/image for a card, symbol-or-image/connectors for a piece — this only
+changes *when* you fill them in, not what's editable overall (an existing tile still
+edits in place afterward; only creation moved into the modal, since that's what was
+asked). Piece creation got the identical treatment for consistency — one generic
+`Modal` component backs both, so there's no separate "how does a dialog work" pattern
+per entry type.
+
+## D24 — Fixed: WASD pan was backwards on both axes
+
+A user caught this by feel ("W goes backwards instead of forwards, same with A"), not
+by reading the code — worth recording since the bug was exactly the kind that's easy to
+get wrong on paper and only actually notice by using the controls. `engine/camera.ts`'s
+`stepCamera` returns an (x, y) that `engine/table.ts`'s `tickCamera` applies *directly*
+as the world container's on-screen position — the table sprite slides under a fixed
+viewport, rather than a separate "camera" position being tracked and negated somewhere
+downstream. Given that, moving "forward" (W, toward what's further up the table) must
+*increase* `world.position.y` (sliding the table down, revealing more of what's above),
+not decrease it (which slides the table up, revealing what's below — backward). All
+four directions (`up`/`down`/`left`/`right`) had this inverted; fixed by flipping the
+sign of each in `stepCamera`, with `camera.test.ts`'s direction assertions updated to
+match the corrected (intended) behavior rather than the previously-shipped one.

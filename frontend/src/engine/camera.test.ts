@@ -9,20 +9,20 @@ describe("stepCamera — panning", () => {
     expect(next).toEqual(ORIGIN);
   });
 
-  it("W (up) moves in -y", () => {
+  it("W (up/forward) moves in +y — table.ts applies this directly as the world container's screen position, so forward must slide the table down to reveal what's further up", () => {
     const next = stepCamera(ORIGIN, { ...NO_CAMERA_INPUT, up: true }, 1, 100, 1);
     expect(next.x).toBeCloseTo(0);
-    expect(next.y).toBeCloseTo(-100);
-  });
-
-  it("S (down) moves in +y", () => {
-    const next = stepCamera(ORIGIN, { ...NO_CAMERA_INPUT, down: true }, 1, 100, 1);
     expect(next.y).toBeCloseTo(100);
   });
 
-  it("A (left) moves in -x, D (right) moves in +x", () => {
-    expect(stepCamera(ORIGIN, { ...NO_CAMERA_INPUT, left: true }, 1, 100, 1).x).toBeCloseTo(-100);
-    expect(stepCamera(ORIGIN, { ...NO_CAMERA_INPUT, right: true }, 1, 100, 1).x).toBeCloseTo(100);
+  it("S (down/backward) moves in -y", () => {
+    const next = stepCamera(ORIGIN, { ...NO_CAMERA_INPUT, down: true }, 1, 100, 1);
+    expect(next.y).toBeCloseTo(-100);
+  });
+
+  it("A (left) moves in +x, D (right) moves in -x", () => {
+    expect(stepCamera(ORIGIN, { ...NO_CAMERA_INPUT, left: true }, 1, 100, 1).x).toBeCloseTo(100);
+    expect(stepCamera(ORIGIN, { ...NO_CAMERA_INPUT, right: true }, 1, 100, 1).x).toBeCloseTo(-100);
   });
 
   it("opposite keys held together cancel out", () => {
@@ -39,9 +39,9 @@ describe("stepCamera — panning", () => {
 
   it("pan distance scales linearly with dt and with speed", () => {
     const half = stepCamera(ORIGIN, { ...NO_CAMERA_INPUT, up: true }, 0.5, 100, 1);
-    expect(half.y).toBeCloseTo(-50);
+    expect(half.y).toBeCloseTo(50);
     const doubleSpeed = stepCamera(ORIGIN, { ...NO_CAMERA_INPUT, up: true }, 1, 200, 1);
-    expect(doubleSpeed.y).toBeCloseTo(-200);
+    expect(doubleSpeed.y).toBeCloseTo(200);
   });
 
   it("panning does not touch rotation", () => {
@@ -82,7 +82,7 @@ describe("stepCamera — rotation", () => {
 
   it("panning and rotating simultaneously both apply", () => {
     const next = stepCamera(ORIGIN, { ...NO_CAMERA_INPUT, up: true, rotateCW: true }, 1, 100, 1);
-    expect(next.y).toBeCloseTo(-100);
+    expect(next.y).toBeCloseTo(100);
     expect(next.rotation).toBeCloseTo(1);
   });
 });
