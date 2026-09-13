@@ -241,6 +241,46 @@ describe("HostTableSync — per-recipient redaction on broadcast", () => {
   });
 });
 
+describe("HostTableSync — drag-hint (cosmetic, never touches the model)", () => {
+  it("relays the hint to every recipient except the dragger, tagged with who's dragging", () => {
+    const { sync, sent } = makeHost(["host", "alice", "bob"]);
+
+    sync.handleRequest("alice", { type: "drag-hint", pileId: "p1", x: 10, y: 20 });
+
+    expect(sent).toEqual([
+      { recipient: "host", event: { type: "drag-hint", pileId: "p1", x: 10, y: 20, byPeerId: "alice" } },
+      { recipient: "bob", event: { type: "drag-hint", pileId: "p1", x: 10, y: 20, byPeerId: "alice" } },
+    ]);
+  });
+
+  it("reaches the host itself when a peer drags, since the host is just another viewer", () => {
+    const { sync, sent } = makeHost(["host", "alice"]);
+    sync.handleRequest("alice", { type: "drag-hint", pileId: "p1", x: 0, y: 0 });
+    expect(sent.some((s) => s.recipient === "host")).toBe(true);
+  });
+
+  it("reaches every peer when the host itself drags", () => {
+    const { sync, sent } = makeHost(["host", "alice", "bob"]);
+    sync.handleRequest("host", { type: "drag-hint", pileId: "p1", x: 0, y: 0 });
+    expect(sent.map((s) => s.recipient).sort()).toEqual(["alice", "bob"]);
+  });
+
+  it("never mutates the model — a pile that doesn't even exist produces no error", () => {
+    const { model, sync } = makeHost(["host"]);
+    expect(() => sync.handleRequest("alice", { type: "drag-hint", pileId: "ghost", x: 1, y: 1 })).not.toThrow();
+    expect(model.getPile("ghost")).toBeUndefined();
+  });
+
+  it("does not affect the real pile's position in the model at all", () => {
+    const { model, sync } = makeHost(["host"]);
+    const pile = model.spawnCard(DEF_A, 5, 5);
+
+    sync.handleRequest("host", { type: "drag-hint", pileId: pile.id, x: 999, y: 999 });
+
+    expect(model.getPile(pile.id)).toMatchObject({ x: 5, y: 5 });
+  });
+});
+
 describe("HostTableSync — sendSnapshotTo", () => {
   it("sends every current pile, redacted for that recipient", () => {
     const { model, sync, sent } = makeHost(["alice", "bob"]);
@@ -298,6 +338,16 @@ describe("PeerTableSync — applying host events", () => {
     expect(model.getPile("stale")).toBeUndefined();
     expect(model.getPile("fresh")).toEqual(fresh);
   });
+
+  it("drag-hint is a no-op on the local model — it's cosmetic only", () => {
+    const model = new TableModel();
+    const pile = model.spawnCard(DEF_A, 5, 5);
+    const sync = new PeerTableSync(model, () => {});
+
+    sync.applyEvent({ type: "drag-hint", pileId: pile.id, x: 999, y: 999, byPeerId: "alice" });
+
+    expect(model.getPile(pile.id)).toMatchObject({ x: 5, y: 5 });
+  });
 });
 
 describe("PeerTableSync — sending requests to the host", () => {
@@ -343,6 +393,12 @@ describe("PeerTableSync — sending requests to the host", () => {
       { type: "set-rotation", pileId: "p1", radians: 1.2 },
       { type: "draw-top", pileId: "p1", offsetX: 10, offsetY: 0 },
     ]);
+  });
+
+  it("dragHint", () => {
+    const { sync, requests } = makePeer();
+    sync.dragHint("p1", 3, 4);
+    expect(requests).toEqual([{ type: "drag-hint", pileId: "p1", x: 3, y: 4 }]);
   });
 });
 

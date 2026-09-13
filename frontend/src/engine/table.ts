@@ -21,6 +21,15 @@ const CAMERA_PAN_SPEED = 400; // world units/second
 const CAMERA_ROTATE_SPEED = Math.PI / 2; // radians/second
 const PLAYER_TOKEN_RADIUS = 16;
 const PLAYER_SEAT_RADIUS = 260;
+/** How often a synced drag sends a "drag-hint" (net/syncProtocol.ts) while it's in
+ * progress, so other players see roughly what's being moved instead of it teleporting
+ * only on drop — coarse on purpose (a cosmetic preview, not the authoritative position,
+ * which is still only ever the final drop), so there's no need for per-frame updates. */
+const DRAG_HINT_INTERVAL_MS = 120;
+/** How transparent a pile looks on someone else's screen while a drag-hint says it's
+ * being moved — mirrors the alpha a local drag already uses (see beginDrag), reset back
+ * to 1 the moment the real, authoritative drop event arrives. */
+const REMOTE_DRAG_ALPHA = 0.85;
 
 const KEY_TO_INPUT: Record<string, keyof CameraInput> = {
   w: "up", s: "down", a: "left", d: "right", q: "rotateCCW", e: "rotateCW",
@@ -61,6 +70,10 @@ export class TableApp implements TableView {
    * pileModel.ts's setPile/loadSnapshot doc comment). */
   private dragging: { pileId: string; view: Container; x: number; y: number; localFloating: PileState | null } | null = null;
   private rotating: { pileId: string; view: Container; radians: number } | null = null;
+  /** Last time (performance.now()) this client sent a drag-hint — see
+   * DRAG_HINT_INTERVAL_MS. Reset to 0 at the start of each synced drag so the very
+   * first move sends immediately rather than waiting out the throttle. */
+  private lastDragHintAt = 0;
   private panning = false;
   private menuEl: HTMLDivElement | null = null;
 
@@ -144,6 +157,7 @@ export class TableApp implements TableView {
       this.model.setPile(event.pile);
       const view = this.views.get(event.pile.id);
       if (view) {
+        view.alpha = 1; // in case a drag-hint below had dimmed it — this is the real, final position now
         view.position.set(event.pile.x, event.pile.y);
         view.rotation = event.pile.rotation;
         this.redraw(event.pile.id);
@@ -157,6 +171,16 @@ export class TableApp implements TableView {
       for (const pileId of [...this.views.keys()]) this.removeView(pileId);
       this.model.loadSnapshot(event.piles);
       for (const pile of event.piles) this.mountView(pile);
+    } else if (event.type === "drag-hint") {
+      // Purely cosmetic (see syncProtocol.ts's TableEvent doc comment): moves the view
+      // to roughly where someone else is dragging it, without touching the model at
+      // all — the model still holds wherever it actually was until the real drop
+      // arrives as a pile-upserted/pile-removed above, which is what corrects this.
+      const view = this.views.get(event.pileId);
+      if (view) {
+        view.position.set(event.x, event.y);
+        view.alpha = REMOTE_DRAG_ALPHA;
+      }
     }
   }
 
@@ -350,6 +374,7 @@ export class TableApp implements TableView {
       const pile = this.model.getPile(pileId);
       if (!view || !pile) return;
       this.dragging = { pileId, view, x: pile.x, y: pile.y, localFloating: null };
+      this.lastDragHintAt = 0; // let the very first move below send a hint immediately
     } else {
       // No syncClient (a bare, room-less sandbox) — the pre-M6 behavior: actually split
       // the stack locally right away, since there's no other peer's model to diverge
@@ -373,6 +398,19 @@ export class TableApp implements TableView {
     this.dragging.view.zIndex = 1000;
   }
 
+  /** Send a coarse, throttled drag-hint (see DRAG_HINT_INTERVAL_MS) — never touches
+   * this client's own model or view, since this client is already moving the real
+   * view locally; it's purely so *other* players see it too before the drop. A no-op
+   * when there's no syncClient at all (a bare, room-less sandbox has no one else to
+   * show it to). */
+  private maybeSendDragHint(pileId: string, x: number, y: number): void {
+    if (!this.syncClient) return;
+    const now = performance.now();
+    if (now - this.lastDragHintAt < DRAG_HINT_INTERVAL_MS) return;
+    this.lastDragHintAt = now;
+    this.syncClient.sendRequest({ type: "drag-hint", pileId, x, y });
+  }
+
   private onBackgroundPointerDown(e: FederatedPointerEvent): void {
     if (e.target === this.app.stage) this.panning = true;
   }
@@ -392,6 +430,8 @@ export class TableApp implements TableView {
       if (this.dragging.localFloating) {
         this.dragging.localFloating.x = local.x;
         this.dragging.localFloating.y = local.y;
+      } else {
+        this.maybeSendDragHint(this.dragging.pileId, local.x, local.y);
       }
     } else if (this.panning) {
       this.world.position.x += e.movementX;
