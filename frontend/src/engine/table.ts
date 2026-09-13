@@ -122,6 +122,13 @@ export class TableApp implements TableView {
     for (const pileId of this.views.keys()) this.redraw(pileId);
   }
 
+  /** The underlying object model — net/roomConnection.ts needs the actual instance
+   * (not a copy) so that a host's in-process mutations (via HostTableSync, applied
+   * directly to this same TableModel) and TableApp's own rendering never disagree. */
+  getModel(): TableModel {
+    return this.model;
+  }
+
   /** Start routing actions through the sync protocol instead of mutating the local
    * model directly — called once net/roomConnection.ts establishes this client's role
    * (host or peer). See the `syncClient` field comment for why this can be set late. */
