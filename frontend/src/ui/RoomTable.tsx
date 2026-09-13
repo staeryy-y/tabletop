@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { CardDef } from "../engine/card";
 import { PileState } from "../engine/pileModel";
 import { TableApp } from "../engine/table";
+import { PackageDistributor } from "../net/packageTransfer";
 import { RoomConnection } from "../net/roomConnection";
 import { Peer, SignalingConnection } from "../net/signaling";
-import { GamePackage } from "../packages/gamePackage";
-import { loadPackageForRoom } from "../packages/gameDefinitionLoader";
+import { createEmptyPackage, GamePackage } from "../packages/gamePackage";
+import { fetchBundledPackage } from "../packages/gameDefinitionLoader";
 import { PackageStore } from "../packages/packageStore";
 import { loadRoomToken } from "../roomToken";
 import { getRememberedRoomPackageId } from "../roomPackageChoice";
@@ -57,6 +58,11 @@ export function RoomTable({ slug }: { slug: string }) {
   const otherPeerIdsRef = useRef<Set<string>>(new Set());
   const loadedPkgRef = useRef<GamePackage | null>(null);
   const seededRef = useRef({ demo: false, pkg: false });
+  // The room's game_def_ref (see app/rooms.py), remembered from `welcome` so later
+  // events (host-changed) know whether a package transfer is even relevant — only a
+  // "custom" room's package needs P2P transfer at all (see packageDistributorRef).
+  const gameDefRefRef = useRef<string | null>(null);
+  const packageDistributorRef = useRef<PackageDistributor | null>(null);
   const [peers, setPeers] = useState<Map<string, Peer>>(new Map());
   const [selfId, setSelfId] = useState<string | null>(null);
   const [hostId, setHostId] = useState<string | null>(null);
@@ -136,27 +142,62 @@ export function RoomTable({ slug }: { slug: string }) {
         // that actually carries the resume snapshot.
         const roomConn = new RoomConnection(table.getModel(), table, conn, event.peerId);
         roomConnRef.current = roomConn;
+
+        // A custom package's actual content only ever exists in whichever browser(s)
+        // hold it — the server never stores it (docs/DECISIONS.md D14) — so any peer
+        // that isn't the one who picked it needs to fetch it from the host over the
+        // same links roomConn just set up (net/packageTransfer.ts). A bundled package
+        // needs none of this: every peer fetches the identical static file itself.
+        const gameDefRef = event.roomInfo.gameDefRef;
+        gameDefRefRef.current = gameDefRef;
+        const distributor = new PackageDistributor(roomConn, (received) => {
+          if (disposed) return;
+          setPkg(received);
+          loadedPkgRef.current = received;
+          seedPackageIfHost(received);
+        });
+        packageDistributorRef.current = distributor;
+
         if (event.hostPeerId !== null && event.hostPeerId !== event.peerId) {
           table.setSyncClient(roomConn.becomePeerOf(event.hostPeerId));
+          if (gameDefRef === "custom") distributor.requestFromHostIfNeeded();
         }
 
-        // Load the room's game package (docs/GAME_DEFINITION.md) — bundled fetches a
-        // static file; custom only resolves if *this* browser is the one that picked it
-        // (see roomPackageChoice.ts — the server never stores which one, per
-        // docs/DECISIONS.md D14). A peer that didn't pick it sees the honest empty
-        // placeholder until real P2P asset transfer exists.
         (async () => {
-          const ref = event.roomInfo.gameDefRef;
-          const customId = ref === "custom" ? getRememberedRoomPackageId(slug) : null;
+          if (gameDefRef.startsWith("bundled:")) {
+            try {
+              const loaded = await fetchBundledPackage(gameDefRef.slice("bundled:".length));
+              if (disposed) return;
+              setPkg(loaded);
+              loadedPkgRef.current = loaded;
+              seedPackageIfHost(loaded);
+            } catch (err) {
+              console.error("failed to load game package", err);
+            }
+            return;
+          }
+
+          // Custom: this browser might be the one that originally picked it (see
+          // roomPackageChoice.ts), in which case it already has everything and can
+          // skip P2P entirely — feeding it to the distributor also means this client
+          // is immediately ready to *serve* it, whether or not it's currently host
+          // (see docs/ARCHITECTURE.md "Room lifecycle" step 4).
+          const customId = getRememberedRoomPackageId(slug);
           const customPkg = customId ? (await packageStore.get(customId))?.pkg : undefined;
-          try {
-            const loaded = await loadPackageForRoom(ref, customPkg);
-            if (disposed) return;
-            setPkg(loaded);
-            loadedPkgRef.current = loaded;
-            seedPackageIfHost(loaded);
-          } catch (err) {
-            console.error("failed to load game package", err);
+          if (disposed) return;
+          if (customPkg) {
+            distributor.setLocalPackage(customPkg);
+            setPkg(customPkg);
+            loadedPkgRef.current = customPkg;
+            seedPackageIfHost(customPkg);
+          } else if (loadedPkgRef.current === null) {
+            // Show an honest placeholder rather than a blank table while the transfer
+            // is in flight — distributor's onReceived callback above replaces it the
+            // moment real content arrives. Guarded on loadedPkgRef so this can't
+            // clobber a package that already arrived over the wire before this
+            // (IndexedDB-bound) check even finished.
+            const placeholder = createEmptyPackage("(waiting for game package from host…)");
+            setPkg(placeholder);
           }
         })();
       } else if (event.type === "peer-joined") {
@@ -177,6 +218,11 @@ export function RoomTable({ slug }: { slug: string }) {
         setHostId(event.hostPeerId);
         if (event.hostPeerId !== mySelfId && roomConnRef.current) {
           table.setSyncClient(roomConnRef.current.becomePeerOf(event.hostPeerId));
+          // Re-ask the new host in case the old one never got around to answering —
+          // a no-op if this client already has the package (setLocalPackage was
+          // already called, e.g. it's the one that picked it, or it received it
+          // earlier from whoever was host before).
+          if (gameDefRefRef.current === "custom") packageDistributorRef.current?.requestFromHostIfNeeded();
         }
       } else if (event.type === "you-are-host") {
         setHostId(mySelfId);
@@ -197,6 +243,7 @@ export function RoomTable({ slug }: { slug: string }) {
       connRef.current = null;
       roomConnRef.current?.destroy();
       roomConnRef.current = null;
+      packageDistributorRef.current = null;
       table.destroy();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -282,10 +329,11 @@ export function RoomTable({ slug }: { slug: string }) {
           the camera, Q/E rotates it — handy when players are seated on different sides of the table.
         </p>
         <p class="hint">
-          Cards and pieces are now synced live with everyone else in the room (M6), one host at a
-          time holding the canonical table and everyone else mirroring it — currently over the
-          signaling server's relay fallback rather than a direct WebRTC connection, so it works but
-          isn't as fast as it will be. Chat is still local to this tab only.
+          Cards and pieces are synced live with everyone else in the room, one host at a time
+          holding the canonical table and everyone else mirroring it, over a direct WebRTC
+          connection to the host (falling back to relaying through the server if a direct
+          connection can't be established). A custom game package transfers the same way, peer to
+          peer, to whoever doesn't already have it. Chat is still local to this tab only.
         </p>
       </aside>
       <div class="table-toolbar">

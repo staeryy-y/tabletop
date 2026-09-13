@@ -235,3 +235,29 @@ doesn't exist here — players who won't cheat also won't peek at a pile of face
 ballots before the group agrees to flip them, the same social contract that makes a
 physical secret ballot work with no mechanism at all. A vote, if a game wants one, is
 just players placing Cards face-down and flipping them together by agreement.
+
+## D17 — Custom package transfer rides the existing table-sync link, not a second data channel
+
+NETWORKING.md's transport-layer table calls for a *second* RTCDataChannel per peer
+dedicated to asset transfer, separate from the one carrying table-sync traffic. The
+actual implementation (net/packageTransfer.ts) doesn't do that: it reuses the same
+PeerLink net/roomConnection.ts already manages for TableRequest/TableEvent messages,
+distinguishing package-transfer messages from table-sync ones purely by a `type` prefix
+(`RoomConnection.SideChannel`). A custom package's content (rules plus every card/piece
+image, all embedded as data: URIs — see D14) is chunked and sent this way to whoever
+doesn't already have it, whether that's a newly-joined peer or a peer that just became
+host and needs to serve it onward.
+
+The simplification is deliberate: negotiating a second data channel per peer (and,
+for real WebRTC, a second round of local/remote description exchange) is real added
+complexity for something that only ever runs once, briefly, right after a peer
+connects — table-sync traffic and a handful of package chunks interleaving on one
+channel is not a bandwidth or latency concern at that scale. If a room's packages grow
+large and frequent enough that this stops being true, splitting them onto their own
+channel is a contained change (a second PeerLink per peer) rather than a protocol
+rewrite. Also intentionally *not* built, matching NETWORKING.md's own framing of these
+as "nice-to-have, not required for v1": a cryptographic content hash, an IndexedDB
+asset cache keyed by it, and any retry logic for a dropped chunk — a lost chunk just
+means that attempt silently never completes, acceptable given the cooperating-players
+trust model (NETWORKING.md "Trust model") and the fact that a package is requested once,
+not continuously streamed.

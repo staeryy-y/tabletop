@@ -110,9 +110,12 @@ tile-placement game (or an original one) is wanted.
 - Swap the M3–M5 relay transport for actual `RTCPeerConnection` data channels, using the
   signaling WS purely for offer/answer/ICE exchange (protocol already designed for this
   in NETWORKING.md — this milestone is transport-only, no message-shape changes).
-- Real chunked binary asset transfer per NETWORKING.md "Asset distribution" (earlier
+- Real chunked custom-package transfer per NETWORKING.md "Asset distribution" (earlier
   milestones can get away with assets small enough to inline, or just ship
-  game-def-bundled packages with few/no images).
+  game-def-bundled packages with few/no images) — since a package's images are already
+  embedded as data: URIs (D14) rather than separate files, this chunks the whole
+  package's JSON and rides the same link as table-sync traffic rather than a dedicated
+  second data channel; see DECISIONS.md D17 for why.
 - Keep the WS-relay path as the automatic fallback when P2P setup fails/times out.
 - Host migration on host disconnect, backed by the periodic snapshot upload — the
   promoted host already has the full game package from its own join, per M2/step 4 in

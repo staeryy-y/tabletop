@@ -24,6 +24,17 @@ export interface TableView {
   applyEvent(event: TableEvent): void;
 }
 
+/** A second, independent message protocol allowed to ride the same per-peer links this
+ * class already manages — see net/packageTransfer.ts, the one consumer so far. Every
+ * incoming message is offered to `isSideChannelMessage` first; only if that returns
+ * false is it interpreted as table-sync traffic (a TableRequest/TableEvent or the
+ * request-snapshot catch-up message below). At most one side channel is supported —
+ * plenty for now, and simpler than a general pub/sub registry nothing else needs yet. */
+export interface SideChannel {
+  isSideChannelMessage(message: unknown): boolean;
+  handle(fromPeerId: string, message: unknown): void;
+}
+
 /** Swap in a different PeerLink implementation by passing a different factory —
  * RoomConnection itself never constructs a transport by name, so upgrading the
  * transport later needs no change here. `role` matters for real WebRTC (only one side
@@ -49,6 +60,7 @@ export class RoomConnection {
   private hostSync: HostTableSync | null = null;
   private peerLinks = new Map<string, PeerLink>();
   private linkToHost: PeerLink | null = null;
+  private sideChannel: SideChannel | null = null;
 
   constructor(
     private model: TableModel,
@@ -90,7 +102,10 @@ export class RoomConnection {
     // signaling flow and webrtcPeerLink.ts's doc comment on PeerRole.
     const link = this.makeLink(this.signaling, hostPeerId, "initiator");
     this.linkToHost = link;
-    link.onMessage((msg) => this.view.applyEvent(msg as TableEvent));
+    link.onMessage((msg) => {
+      if (this.sideChannel?.isSideChannelMessage(msg)) this.sideChannel.handle(hostPeerId, msg);
+      else this.view.applyEvent(msg as TableEvent);
+    });
     link.send(REQUEST_SNAPSHOT);
     return { sendRequest: (req) => link.send(req) };
   }
@@ -105,7 +120,8 @@ export class RoomConnection {
     // The host always answers rather than initiates — see becomePeerOf's comment.
     const link = this.makeLink(this.signaling, peerId, "answerer");
     link.onMessage((msg) => {
-      if (isRequestSnapshot(msg)) this.hostSync!.sendSnapshotTo(peerId);
+      if (this.sideChannel?.isSideChannelMessage(msg)) this.sideChannel.handle(peerId, msg);
+      else if (isRequestSnapshot(msg)) this.hostSync!.sendSnapshotTo(peerId);
       else this.hostSync!.handleRequest(peerId, msg as TableRequest);
     });
     this.peerLinks.set(peerId, link);
@@ -116,6 +132,27 @@ export class RoomConnection {
   removePeer(peerId: string): void {
     this.peerLinks.get(peerId)?.close();
     this.peerLinks.delete(peerId);
+  }
+
+  /** Register the (at most one) side channel — see the SideChannel doc comment above.
+   * Safe to call once, before any role is established; every link created afterward
+   * (and already-created links, since the check happens per-message, not per-link)
+   * offers messages to it first. */
+  setSideChannel(channel: SideChannel): void {
+    this.sideChannel = channel;
+  }
+
+  /** Send a side-channel message directly to the host — meaningful only while this
+   * client is a peer (a harmless no-op otherwise, e.g. before any role is assigned). */
+  sendToHost(message: unknown): void {
+    this.linkToHost?.send(message);
+  }
+
+  /** Send a side-channel message directly to one connected peer — meaningful only
+   * while this client is host (a harmless no-op if that peer isn't linked, e.g. it
+   * already left, or this client isn't host at all). */
+  sendToPeer(peerId: string, message: unknown): void {
+    this.peerLinks.get(peerId)?.send(message);
   }
 
   /** The current table state, suitable for the periodic recovery upload described in

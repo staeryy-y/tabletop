@@ -28,32 +28,40 @@ session tops out around 4-8 players in practice).
 
 ## Asset distribution
 
-Game packages — a room's rules plus every card/tile/token/board image they use — travel
-the same star topology as everything else: from the host to each peer, never through or
-from the server (see [GAME_DEFINITION.md](GAME_DEFINITION.md) "Game packages" and
-[ARCHITECTURE.md](ARCHITECTURE.md) principle 6). Concretely:
+A room's rules plus every card/tile/token/board image they use never touch the server
+(see [GAME_DEFINITION.md](GAME_DEFINITION.md) "Game packages" and
+[ARCHITECTURE.md](ARCHITECTURE.md) principle 6) — but only a **custom** package (one an
+admin loaded from a local file rather than picking a bundled example) actually needs P2P
+transfer at all. A **bundled** package (one of the examples shipped with the server,
+e.g. `game-defs/poker-5-card-draw.yaml`) is just a static file every peer fetches for
+itself, identically, with no game-specific content ever flowing peer to peer.
 
-- Each asset in a package is referenced by a content hash, not just a path — so a peer
-  that already has a given image cached (see below) never needs to re-receive it, even
-  across different rooms or a redeploy.
-- **The full package is sent to every joining peer up front**, as part of the same step
-  that delivers the initial state snapshot (step 4 in ARCHITECTURE.md "Room lifecycle") —
-  not fetched lazily, one asset at a time, as it's first needed. This costs a bit more
-  transfer at join time, but it means *any* connected peer already has everything it
-  would need if later promoted to host (see "Host migration" below) — lazily-fetched
-  assets would leave a promoted host missing whatever it happened not to have needed yet.
-- Images are chunked (WebRTC data channel messages have a practical size ceiling, well
-  under most card/tile art) and reassembled by content hash on the receiving end.
-- Browsers may cache received assets in IndexedDB, keyed by content hash, so rejoining
-  the same room — or joining a different room that happens to reuse a bundled package —
-  doesn't re-transfer unchanged images. This is a nice-to-have, not required for a
-  working v1.
-- A **custom** package (one an admin loaded from a local file rather than picking a
-  bundled example) exists only in that admin's browser and whichever peers it's been
-  transferred to over the course of the session — there's no server copy to fall back
-  to. If every peer who ever held it leaves, the package is gone unless someone exported
-  it back out as a file first (see GAME_DEFINITION.md "Game packages"). This is an
-  accepted consequence of keeping the server genuinely asset-free, not an oversight.
+For a custom package (net/packageTransfer.ts's `PackageDistributor`):
+
+- Images are already embedded in the package as data: URIs (see GAME_DEFINITION.md /
+  D14) rather than separate files, so "asset transfer" and "package transfer" are the
+  same operation: the whole package, serialized to JSON, chunked, and sent — well under
+  a data channel's practical per-message size ceiling per chunk — to whoever doesn't
+  already have it.
+- **The package is sent as soon as it's asked for.** A joining peer that doesn't already
+  hold the package locally (see roomPackageChoice.ts — the picker's own browser skips
+  this whole path) requests it from whoever's currently host; the host answers
+  immediately if its own package is already loaded, or once it becomes available if not
+  (e.g. a newly-promoted host still finishing its own reassembly from the *previous*
+  host).
+- Whoever finishes reassembling a package this way is immediately ready to serve it to
+  someone else too — including if they're later promoted to host themselves (see "Host
+  migration" below) — since receiving one and being asked for one both just mean "I now
+  have (or don't yet have) the content," regardless of current host/peer role.
+- This deliberately rides the *same* link as table-sync traffic rather than a second,
+  dedicated data channel — see [DECISIONS.md](DECISIONS.md) D17 for why, and for the
+  content-hash caching this intentionally doesn't build for v1 (a nice-to-have, not
+  required for a working v1).
+- A custom package exists only in whichever browsers currently hold it — there's no
+  server copy to fall back to. If every peer who ever held it leaves, the package is
+  gone unless someone exported it back out as a file first (see GAME_DEFINITION.md "Game
+  packages"). This is an accepted consequence of keeping the server genuinely
+  asset-free, not an oversight.
 
 ## Signaling protocol (over the WS)
 
