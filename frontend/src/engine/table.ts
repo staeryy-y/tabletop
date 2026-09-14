@@ -17,6 +17,7 @@ import { MatState, PieceState, PileState, TableModel } from "./pileModel";
 import { PieceDef, PIECE_SIZE, renderPiece } from "./piece";
 import { computeSeatPositions } from "./seating";
 import { UI_TEXT } from "../uiText";
+import { GestureState, GestureStateMachine } from "./stateMachine";
 
 const T = UI_TEXT.tableMenu;
 
@@ -198,6 +199,7 @@ export class TableApp implements TableView {
    * "set-piece-rotation" request on release. See TableModel.movePiece's doc comment
    * for why a Piece drag can be this much simpler than a card pile's. */
   private draggingPiece: { pieceId: string; view: Container } | null = null;
+  private gesture = new GestureStateMachine();
   private rotatingPiece: { pieceId: string; view: Container; radians: number } | null = null;
   /** Same idea as draggingPiece/rotatingPiece, for a Mat — see canLocallyModifyMat for
    * the one difference: these only ever get set at all if the mat is currently
@@ -701,7 +703,7 @@ export class TableApp implements TableView {
     handle.on("pointerdown", (e: FederatedPointerEvent) => {
       e.stopPropagation();
       const view = this.views.get(pileId);
-      if (view) this.rotating = { pileId, view, radians: view.rotation };
+      if (view && this.gesture.begin(GestureState.Rotate)) this.rotating = { pileId, view, radians: view.rotation };
       this.lastRotateHintAt = 0; // let the very first move below send a hint immediately
     });
     return handle;
@@ -733,7 +735,7 @@ export class TableApp implements TableView {
   }
 
   private beginWholePileDrag(pileId: string, e: FederatedPointerEvent): void {
-    if (this.dragging || this.groupDragging || this.draggingWholePile) return;
+    if (!this.gesture.begin(GestureState.PileDrag) || this.dragging || this.groupDragging || this.draggingWholePile) return;
     const view = this.views.get(pileId);
     const pile = this.model.getPile(pileId);
     if (!view || !pile) return;
@@ -850,13 +852,13 @@ export class TableApp implements TableView {
     handle.on("pointerdown", (e: FederatedPointerEvent) => {
       e.stopPropagation();
       const view = this.pieceViews.get(pieceId);
-      if (view) this.rotatingPiece = { pieceId, view, radians: view.rotation };
+      if (view && this.gesture.begin(GestureState.Rotate)) this.rotatingPiece = { pieceId, view, radians: view.rotation };
     });
     return handle;
   }
 
   private beginDragPiece(pieceId: string, e: FederatedPointerEvent): void {
-    if (this.draggingPiece) return;
+    if (!this.gesture.begin(GestureState.PieceDrag) || this.draggingPiece) return;
     const view = this.pieceViews.get(pieceId);
     if (!view) return;
     this.draggingPiece = { pieceId, view };
@@ -942,6 +944,7 @@ export class TableApp implements TableView {
   }
 
   private beginGroupPieceDrag(e: FederatedPointerEvent): void {
+    if (!this.gesture.begin(GestureState.GroupDrag)) return;
     const local = this.world.toLocal(e.global);
     const startPositions = new Map<string, { x: number; y: number }>();
     for (const id of this.selectedPieceIds) {
@@ -1016,7 +1019,7 @@ export class TableApp implements TableView {
       e.stopPropagation();
       if (!this.canLocallyModifyMat(matId)) return;
       const view = this.matViews.get(matId);
-      if (view) this.rotatingMat = { matId, view, radians: view.rotation };
+      if (view && this.gesture.begin(GestureState.Rotate)) this.rotatingMat = { matId, view, radians: view.rotation };
     });
     return handle;
   }
@@ -1211,6 +1214,7 @@ export class TableApp implements TableView {
   }
 
   private beginGroupDrag(e: FederatedPointerEvent): void {
+    if (!this.gesture.begin(GestureState.GroupDrag)) return;
     const local = this.world.toLocal(e.global);
     const startPositions = new Map<string, { x: number; y: number }>();
     for (const pileId of this.selectedPileIds) {
@@ -1229,8 +1233,9 @@ export class TableApp implements TableView {
    * pointer's starting bearing around the centroid, so onPointerMove/onPointerUp only
    * need to track how much that bearing has changed. */
   private beginGroupRotate(e: FederatedPointerEvent): void {
+    if (!this.gesture.begin(GestureState.Rotate)) return;
     const centroid = this.selectionCentroid();
-    if (!centroid) return;
+    if (!centroid) { this.gesture.end(GestureState.Rotate); return; }
     const local = this.world.toLocal(e.global);
     const startAngle = Math.atan2(local.x - centroid.x, -(local.y - centroid.y));
     const startStates = new Map<string, { x: number; y: number; rotation: number }>();
@@ -1266,7 +1271,7 @@ export class TableApp implements TableView {
   // --- Dragging ---
 
   private beginDrag(pileId: string, e: FederatedPointerEvent): void {
-    if (this.dragging || this.groupDragging || this.draggingWholePile) return;
+    if (!this.gesture.isIdle() || this.dragging || this.groupDragging || this.draggingWholePile) return;
 
     // Dragging a pile that's part of a 2+ selection moves the whole group together
     // instead — see beginGroupDrag and the selectedPileIds field comment.
@@ -1296,6 +1301,7 @@ export class TableApp implements TableView {
         this.world.addChild(view);
       }
       this.dragging = { pileId, view, x: pile.x, y: pile.y, offsetX: local.x - pile.x, offsetY: local.y - pile.y, startX: local.x, startY: local.y, moved: false, localFloating: null, ghost };
+      this.gesture.begin(GestureState.CardDrag);
       this.lastDragHintAt = 0; // let the very first move below send a hint immediately
     } else {
       // No syncClient (a bare, room-less sandbox) — the pre-M6 behavior: actually split
@@ -1315,6 +1321,7 @@ export class TableApp implements TableView {
       }
       const local = this.world.toLocal(e.global);
       this.dragging = { pileId: floating.id, view, x: floating.x, y: floating.y, offsetX: local.x - floating.x, offsetY: local.y - floating.y, startX: local.x, startY: local.y, moved: false, localFloating: floating, ghost: false };
+      this.gesture.begin(GestureState.CardDrag);
     }
 
     this.dragging.view.alpha = 0.85;
@@ -1356,6 +1363,7 @@ export class TableApp implements TableView {
 
   private onBackgroundPointerDown(e: FederatedPointerEvent): void {
     if (e.target !== this.app.stage) return;
+    if (!this.gesture.begin(GestureState.BoxSelect)) return;
     // Starts a box-select drag in screen space (e.global), not world space — see the
     // boxSelect field's doc comment for why (the camera can be rotated with Q/E, so an
     // axis-aligned rectangle only means "what's visually inside the box" in screen
@@ -1454,6 +1462,10 @@ export class TableApp implements TableView {
   }
 
   private onPointerUp(): void {
+    // A pointerup is the single commit point for every gesture. Clear the state
+    // machine immediately so pointerupoutside/duplicate browser events cannot commit
+    // the same operation a second time.
+    this.gesture.end();
     if (this.boxSelect) {
       const { startX, startY, endX, endY, rect } = this.boxSelect;
       this.boxSelect = null;
