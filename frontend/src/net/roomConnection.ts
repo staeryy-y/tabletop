@@ -136,6 +136,16 @@ export class RoomConnection {
     return { sendRequest: (req) => link.send(req) };
   }
 
+  /** Ask the current host for a fresh full state. This is intentionally public for
+   * startup catch-up: a custom package can finish transferring after the first table
+   * snapshot, and the host may have seeded its cards in that interval. */
+  requestSnapshotFromHost(): void {
+    if (this.linkToHost) {
+      console.info("[rpg-tabletop][sync] requesting fresh snapshot", { self: this.selfPeerId });
+      this.linkToHost.send(REQUEST_SNAPSHOT);
+    }
+  }
+
   /** A new peer joined the room — give them a link and catch them up. Only meaningful
    * while this client is host; a no-op otherwise (that peer will get a link from
    * whoever the actual host is). This push is a best-effort optimization, not the only

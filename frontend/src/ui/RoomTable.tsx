@@ -312,6 +312,10 @@ export function RoomTable({ slug }: { slug: string }) {
           setPkg(normalized);
           loadedPkgRef.current = normalized;
           seedStarterContentIfHost(normalized);
+          // Package delivery and table-state delivery are independent channels. Ask
+          // again here so a guest that finished receiving assets while the host was
+          // seeding cannot remain stuck with an empty canvas.
+          roomConn.requestSnapshotFromHost();
         });
         packageDistributorRef.current = distributor;
 

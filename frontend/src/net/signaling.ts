@@ -60,9 +60,10 @@ export class SignalingConnection {
 
   constructor(slug: string, token: string) {
     this.logLabel = `room=${slug}`;
+    const build = [...document.scripts].map((script) => script.src.split("/").pop()).find((name) => name?.startsWith("index-")) ?? "unknown";
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const url = `${proto}//${location.host}/ws/room/${slug}?token=${encodeURIComponent(token)}`;
-    console.info("[rpg-tabletop][signaling] connecting", this.logLabel, `${proto}//${location.host}/ws/room/${slug}`);
+    console.info("[rpg-tabletop][signaling] connecting", this.logLabel, { endpoint: `${proto}//${location.host}/ws/room/${slug}`, build });
     this.ws = new WebSocket(url);
     this.connectionTimer = window.setTimeout(() => {
       if (this.ws.readyState === WebSocket.CONNECTING) {
