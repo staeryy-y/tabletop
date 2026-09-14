@@ -127,6 +127,30 @@ tile-placement game (or an original one) is wanted.
 
 ## Later / explicitly out of scope for v1
 
+## M7 — Presentation, feel, and resilience
+
+This milestone turns the reliable sandbox into a game table that feels responsive and
+alive, while protecting the host-authoritative model from stale or contradictory state.
+
+- Add monotonic snapshot revisions and client-side stale-snapshot rejection.
+- Add interpolation for remote object movement and rotation, with authoritative
+  correction on drop.
+- Add lightweight flip particle bursts, selection highlights, drag trails, and other
+  opt-in client-only effects that never enter the sync protocol.
+- Add reduced-motion and low-power rendering preferences for effects.
+- Add protocol/schema validation, host-only mutation tests, and multi-browser E2E tests
+  covering guest startup, hidden cards, stack operations, and reconnects.
+- Update deployment/cache diagnostics and keep the implementation log aligned with the
+  actual transport and persistence choices.
+
+## M8 — Completeness and game-authoring depth
+
+- Implement piece draw-pile mode and connector snapping.
+- Add Actor claiming and generated character-sheet UI.
+- Ship original poker and hidden-role sample packages.
+- Decide and implement a single persistence strategy for packages and saved tables.
+- Improve mobile/touch accessibility, keyboard focus handling, and bundled visual assets.
+
 - Any rules/flow layer at all — turns, phases, roles, win conditions, triggers. Explicit
   non-goal, not a deferred feature (see GAME_DEFINITION.md "Why no rules layer?").
 - Fog of war, dynamic lighting, hex/square grid movement costs.

@@ -101,7 +101,7 @@ export type TableEvent =
    * pre-existing literal of this event (tests, older code) that only ever knew about
    * piles keeps type-checking unchanged — see PeerTableSync.applyEvent's `?? []` and
    * TableModel.loadSnapshot's matching default parameters. */
-  | { type: "snapshot"; piles: PileState[]; pieces?: PieceState[]; mats?: MatState[] }
+  | { type: "snapshot"; piles: PileState[]; pieces?: PieceState[]; mats?: MatState[]; revision?: number }
   | { type: "drag-hint"; pileId: string; x: number; y: number; byPeerId: string }
   | { type: "rotate-hint"; pileId: string; radians: number; byPeerId: string }
   | { type: "cursor-hint"; x: number; y: number; byPeerId: string };
@@ -142,6 +142,9 @@ export type Broadcast = (recipientPeerId: string, event: TableEvent) => void;
  * its own) requests to it, and broadcasts the outcome. */
 export class HostTableSync {
   private lastPickUpAt = new Map<string, number>();
+  /** Monotonic host-authoritative revision. Peers use this to reject delayed
+   * snapshots that would otherwise resurrect an older table state. */
+  private revision = 0;
   constructor(
     private model: TableModel,
     private broadcast: Broadcast,
@@ -302,6 +305,7 @@ export class HostTableSync {
         break;
     }
 
+    if (touched.size || touchedPieces.size || touchedMats.size) this.revision++;
     this.emitTouched(touched);
     this.emitTouchedPieces(touchedPieces);
     this.emitTouchedMats(touchedMats);
@@ -381,7 +385,10 @@ export class HostTableSync {
       pieces: pieces.length,
       mats: mats.length,
     });
-    this.broadcast(recipientPeerId, { type: "snapshot", piles, pieces, mats });
+    const snapshot: TableEvent = this.revision === 0
+      ? { type: "snapshot", piles, pieces, mats }
+      : { type: "snapshot", piles, pieces, mats, revision: this.revision };
+    this.broadcast(recipientPeerId, snapshot);
   }
 }
 
@@ -389,6 +396,7 @@ export class HostTableSync {
  * TableModel (never mutated any other way — see pileModel.ts's setPile/loadSnapshot),
  * and turns UI-driven intent into requests sent to the host. */
 export class PeerTableSync {
+  private latestRevision = -1;
   constructor(private model: TableModel, private sendToHost: (req: TableRequest) => void) {}
 
   applyEvent(event: TableEvent): void {
@@ -412,6 +420,10 @@ export class PeerTableSync {
         this.model.removeMat(event.matId);
         break;
       case "snapshot":
+        // Relay delivery and reconnects can reorder messages. Never let an older
+        // full snapshot overwrite newer upsert/remove events already applied.
+        if (event.revision !== undefined && event.revision < this.latestRevision) return;
+        if (event.revision !== undefined) this.latestRevision = event.revision;
         this.model.loadSnapshot(event.piles, event.pieces ?? [], event.mats ?? []);
         break;
       case "drag-hint":

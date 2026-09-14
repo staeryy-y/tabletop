@@ -70,6 +70,7 @@ const BOX_SELECT_THRESHOLD = 4;
 const SELECTION_OUTLINE_COLOR = 0x4fa8ff;
 const GROUP_HANDLE_RADIUS = 12;
 const GROUP_HANDLE_COLOR = 0xffd24f;
+const FLIP_PARTICLE_COUNT = 14;
 
 /** Rotate the vector (x, y) by `radians`, using the same rotation convention as
  * PixiJS's own Container.rotation (and this file's existing atan2(dx, -dy) reading of
@@ -130,6 +131,8 @@ export class TableApp implements TableView {
    * reordering `world`'s own children), and new cards/pieces are always appended
    * directly to `world`, after this container already exists there. */
   private matsLayer = new Container();
+  private effectsLayer = new Container();
+  private flipParticles: Array<{ view: Graphics; vx: number; vy: number; life: number }> = [];
   private matViews = new Map<string, Container>();
   private matFaceLayers = new Map<string, Container>();
   /** This client's own GM status, per docs/DECISIONS.md D26 — set once ui/RoomTable.tsx
@@ -266,6 +269,7 @@ export class TableApp implements TableView {
     this.world.position.set(container.clientWidth / 2, container.clientHeight / 2);
     this.world.addChild(this.drawTableBackground()); // added first — behind every pile/token
     this.world.addChild(this.matsLayer); // added next — behind every Card/Piece, above the background (D26)
+    this.world.addChild(this.effectsLayer); // transient feedback above the table objects
 
     this.app.stage.eventMode = "static";
     this.app.stage.hitArea = this.app.screen;
@@ -287,6 +291,7 @@ export class TableApp implements TableView {
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("keyup", this.onKeyUp);
     this.app.ticker.add((ticker) => this.tickCamera(ticker.deltaMS / 1000));
+    this.app.ticker.add((ticker) => this.tickEffects(ticker.deltaMS / 1000));
     this.initialized = true;
     const pending = this.pendingEvents;
     this.pendingEvents = [];
@@ -339,7 +344,12 @@ export class TableApp implements TableView {
       return;
     }
     if (event.type === "pile-upserted") {
+      const previous = this.model.getPile(event.pile.id);
+      const previousFace = previous?.cards[previous.cards.length - 1]?.faceUp;
       this.model.setPile(event.pile);
+      if (previousFace !== undefined && previousFace !== event.pile.cards[event.pile.cards.length - 1]?.faceUp) {
+        this.spawnFlipParticles(event.pile.x, event.pile.y);
+      }
       const view = this.views.get(event.pile.id);
       if (view) {
         view.alpha = 1; // in case a drag-hint below had dimmed it — this is the real, final position now
@@ -1653,6 +1663,34 @@ export class TableApp implements TableView {
     }
     this.model.flip(pileId);
     this.redraw(pileId);
+  }
+
+  private spawnFlipParticles(x: number, y: number): void {
+    for (let i = 0; i < FLIP_PARTICLE_COUNT; i++) {
+      const angle = (Math.PI * 2 * i) / FLIP_PARTICLE_COUNT + (Math.random() - 0.5) * 0.35;
+      const speed = 45 + Math.random() * 55;
+      const view = new Graphics();
+      view.circle(0, 0, 2 + Math.random() * 2).fill({ color: 0xffd66b, alpha: 0.9 });
+      view.position.set(x, y);
+      this.effectsLayer.addChild(view);
+      this.flipParticles.push({ view, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 0.45 });
+    }
+  }
+
+  private tickEffects(dt: number): void {
+    for (let i = this.flipParticles.length - 1; i >= 0; i--) {
+      const p = this.flipParticles[i];
+      p.life -= dt;
+      p.view.position.x += p.vx * dt;
+      p.view.position.y += p.vy * dt;
+      p.vx *= Math.pow(0.08, dt);
+      p.vy *= Math.pow(0.08, dt);
+      p.view.alpha = Math.max(0, p.life / 0.45);
+      if (p.life <= 0) {
+        p.view.destroy();
+        this.flipParticles.splice(i, 1);
+      }
+    }
   }
 
   private doToggleHide(pileId: string): void {
