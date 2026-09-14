@@ -171,6 +171,17 @@ export function RoomTable({ slug }: { slug: string }) {
   const [helpOpen, setHelpOpen] = useState(false);
   const [colorMenuOpen, setColorMenuOpen] = useState(false);
   const [colorPromptOpen, setColorPromptOpen] = useState(false);
+  const [toasts, setToasts] = useState<string[]>([]);
+  const [syncStatus, setSyncStatus] = useState<"connecting" | "ready" | "error">("connecting");
+
+  function toast(message: string): void {
+    setToasts((prev) => [...prev.slice(-3), message]);
+    window.setTimeout(() => setToasts((prev) => prev.slice(1)), 3500);
+  }
+
+  useEffect(() => {
+    tableRef.current?.setEffectsConfig(pkg?.effects);
+  }, [pkg]);
 
   useEffect(() => {
     const token = loadRoomToken(slug);
@@ -266,8 +277,10 @@ export function RoomTable({ slug }: { slug: string }) {
 
     const unsubscribe = conn.on((event) => {
       if (event.type === "connection-error") {
+        setSyncStatus("error");
         setConnectionError(event.message);
       } else if (event.type === "welcome") {
+        setSyncStatus("ready");
         console.info("[rpg-tabletop][room] welcome", { slug, self: event.peerId, host: event.hostPeerId, gameDefRef: event.roomInfo.gameDefRef, peers: event.peers.length });
         mySelfId = event.peerId;
         gmPeerId = event.gmPeerId;
@@ -368,12 +381,14 @@ export function RoomTable({ slug }: { slug: string }) {
           }
         })();
       } else if (event.type === "peer-joined") {
+        toast(`${event.name} joined the table`);
         otherPeerIdsRef.current.add(event.peerId);
         roomConnRef.current?.addPeer(event.peerId);
         setPeers((prev) => new Map(prev).set(event.peerId, event));
       } else if (event.type === "presence-changed") {
         setPeers((prev) => new Map(prev).set(event.peerId, event));
       } else if (event.type === "peer-left") {
+        toast(`Player ${event.peerId} left the table`);
         otherPeerIdsRef.current.delete(event.peerId);
         roomConnRef.current?.removePeer(event.peerId);
         setPeers((prev) => {
@@ -510,6 +525,10 @@ export function RoomTable({ slug }: { slug: string }) {
           why this replaced the old webapp-style layout. */}
       <div class="hud-players">
         <h2>{roomName}</h2>
+        <p class="hint hud-sync-status" role="status">
+          <span class={"sync-dot sync-" + syncStatus} />
+          {syncStatus === "ready" ? "Synced" : syncStatus === "error" ? "Connection lost" : "Connecting…"}
+        </p>
         {pkg && <p class="hint hud-pkg-name">{pkg.name}</p>}
         <button class="hud-invite-button" onClick={copyInviteLink}>
           {linkCopied ? T.inviteLinkCopied : T.inviteLinkButton}
@@ -528,6 +547,12 @@ export function RoomTable({ slug }: { slug: string }) {
           {peers.size === 0 && <li class="hint">{T.connectingHint}</li>}
         </ul>
       </div>
+
+      {toasts.length > 0 && (
+        <div class="hud-toasts" aria-live="polite">
+          {toasts.map((message, index) => <div class="hud-toast" key={`${message}-${index}`}>{message}</div>)}
+        </div>
+      )}
 
       {chatOpen && (
         <div class="hud-chat">

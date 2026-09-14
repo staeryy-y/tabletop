@@ -116,6 +116,12 @@ export interface MacroDef {
   roll: string;
 }
 
+export interface PresentationEffects {
+  enabled?: boolean;
+  particles?: boolean;
+  intensity?: number;
+}
+
 export interface GamePackage {
   name: string;
   tracks: TrackDef[];
@@ -124,6 +130,7 @@ export interface GamePackage {
   pieceSets: PieceSet[];
   matSets: MatSet[];
   macros: MacroDef[];
+  effects?: PresentationEffects;
 }
 
 export function createEmptyPackage(name: string): GamePackage {

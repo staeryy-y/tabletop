@@ -249,6 +249,14 @@ button:disabled {
   backdrop-filter: blur(3px);
   font-family: var(--font-mono);
 }
+.hud-sync-status { display: flex; align-items: center; gap: 6px; margin: 4px 0 8px; }
+.sync-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: #f5c542; }
+.sync-ready { background: #52d273; }
+.sync-error { background: #e85d5d; }
+.hud-toasts { position: fixed; right: 18px; bottom: 18px; z-index: 20; display: grid; gap: 8px; pointer-events: none; }
+.hud-toast { background: rgba(24, 27, 35, .92); border: 1px solid rgba(255,255,255,.18); border-radius: 8px; padding: 9px 13px; color: #f4f6fb; box-shadow: 0 5px 20px rgba(0,0,0,.3); animation: toast-in .2s ease-out; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .hud-toast { animation: none; } }
 
 .hud-players h2 {
   margin: 0 0 4px;

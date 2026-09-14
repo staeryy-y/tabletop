@@ -18,6 +18,7 @@ import { PieceDef, PIECE_SIZE, renderPiece } from "./piece";
 import { computeSeatPositions } from "./seating";
 import { UI_TEXT } from "../uiText";
 import { GestureState, GestureStateMachine } from "./stateMachine";
+import { PresentationEffects } from "../packages/gamePackage";
 
 const T = UI_TEXT.tableMenu;
 
@@ -136,6 +137,7 @@ export class TableApp implements TableView {
   private matsLayer = new Container();
   private effectsLayer = new Container();
   private flipParticles: Array<{ view: Graphics; vx: number; vy: number; life: number }> = [];
+  private effectsConfig: PresentationEffects = { enabled: true, particles: true, intensity: 1 };
   private motionTargets = new Map<string, { view: Container; x: number; y: number; rotation: number }>();
   private matViews = new Map<string, Container>();
   private matFaceLayers = new Map<string, Container>();
@@ -326,6 +328,10 @@ export class TableApp implements TableView {
     this.selfIsGm = isGm;
   }
 
+  setEffectsConfig(config: PresentationEffects | undefined): void {
+    this.effectsConfig = config ?? { enabled: true, particles: true, intensity: 1 };
+  }
+
   /** The underlying object model — net/roomConnection.ts needs the actual instance
    * (not a copy) so that a host's in-process mutations (via HostTableSync, applied
    * directly to this same TableModel) and TableApp's own rendering never disagree. */
@@ -351,10 +357,12 @@ export class TableApp implements TableView {
     if (event.type === "pile-upserted") {
       const previous = this.model.getPile(event.pile.id);
       const previousFace = previous?.cards[previous.cards.length - 1]?.faceUp;
+      const moved = previous && (previous.x !== event.pile.x || previous.y !== event.pile.y);
       this.model.setPile(event.pile);
       if (previousFace !== undefined && previousFace !== event.pile.cards[event.pile.cards.length - 1]?.faceUp) {
         this.spawnFlipParticles(event.pile.x, event.pile.y);
       }
+      if (moved) this.spawnImpactParticles(event.pile.x, event.pile.y, 0x8fd3ff);
       const view = this.views.get(event.pile.id);
       if (view) {
         view.alpha = 1; // in case a drag-hint below had dimmed it — this is the real, final position now
@@ -1671,11 +1679,17 @@ export class TableApp implements TableView {
   }
 
   private spawnFlipParticles(x: number, y: number): void {
-    for (let i = 0; i < FLIP_PARTICLE_COUNT; i++) {
+    this.spawnImpactParticles(x, y, 0xffd66b);
+  }
+
+  private spawnImpactParticles(x: number, y: number, color: number): void {
+    if (this.effectsConfig.enabled === false || this.effectsConfig.particles === false || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const intensity = Math.max(0.1, Math.min(2, this.effectsConfig.intensity ?? 1));
+    for (let i = 0; i < Math.round(FLIP_PARTICLE_COUNT * intensity); i++) {
       const angle = (Math.PI * 2 * i) / FLIP_PARTICLE_COUNT + (Math.random() - 0.5) * 0.35;
       const speed = 45 + Math.random() * 55;
       const view = new Graphics();
-      view.circle(0, 0, 2 + Math.random() * 2).fill({ color: 0xffd66b, alpha: 0.9 });
+      view.circle(0, 0, 2 + Math.random() * 2).fill({ color, alpha: 0.9 });
       view.position.set(x, y);
       this.effectsLayer.addChild(view);
       this.flipParticles.push({ view, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 0.45 });
