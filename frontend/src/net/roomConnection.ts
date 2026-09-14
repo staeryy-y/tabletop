@@ -88,6 +88,7 @@ export class RoomConnection {
    * that was already in the room before this client became host doesn't wait for its
    * next unrelated state change to catch up. */
   becomeHost(existingPeerIds: string[]): TableSyncClient {
+    console.info("[rpg-tabletop][sync] becoming host", { self: this.selfPeerId, peers: existingPeerIds });
     this.linkToHost?.close();
     this.linkToHost = null;
     this.hostSync = new HostTableSync(
@@ -108,6 +109,7 @@ export class RoomConnection {
    * guarantee that the host's push arrives after this peer is actually listening for
    * it — asking again here is what makes catch-up correct instead of merely usual. */
   becomePeerOf(hostPeerId: string): TableSyncClient {
+    console.info("[rpg-tabletop][sync] linking to host", { self: this.selfPeerId, host: hostPeerId });
     this.teardownHostRole();
     // The peer always initiates the offer to the host — see docs/NETWORKING.md's
     // signaling flow and webrtcPeerLink.ts's doc comment on PeerRole.
@@ -115,6 +117,10 @@ export class RoomConnection {
     this.linkToHost = link;
     link.onMessage((msg) => {
       if (this.tryHandleAsSideChannel(hostPeerId, msg)) return;
+      if (typeof msg === "object" && msg !== null && (msg as { type?: unknown }).type === "snapshot") {
+        const snapshot = msg as { piles?: unknown[]; pieces?: unknown[]; mats?: unknown[] };
+        console.info("[rpg-tabletop][sync] snapshot received", { self: this.selfPeerId, host: hostPeerId, piles: snapshot.piles?.length ?? 0, pieces: snapshot.pieces?.length ?? 0, mats: snapshot.mats?.length ?? 0 });
+      }
       this.view.applyEvent(msg as TableEvent);
     });
     link.send(REQUEST_SNAPSHOT);
@@ -137,6 +143,7 @@ export class RoomConnection {
    * relying on this alone isn't safe. */
   addPeer(peerId: string): void {
     if (!this.hostSync || peerId === this.selfPeerId || this.peerLinks.has(peerId)) return;
+    console.info("[rpg-tabletop][sync] linking peer", { host: this.selfPeerId, peer: peerId });
     // The host always answers rather than initiates — see becomePeerOf's comment.
     const link = this.makeLink(this.signaling, peerId, "answerer");
     link.onMessage((msg) => {
@@ -195,7 +202,9 @@ export class RoomConnection {
    * docs/NETWORKING.md "Host migration" (app/signaling.py's `snapshot` message) — only
    * meaningful while this client is host. */
   currentSnapshot(): TableSnapshot {
-    return { piles: this.model.allPiles(), pieces: this.model.allPieces(), mats: this.model.allMats() };
+    const snapshot = { piles: this.model.allPiles(), pieces: this.model.allPieces(), mats: this.model.allMats() };
+    console.info("[rpg-tabletop][sync] snapshot", { self: this.selfPeerId, piles: snapshot.piles.length, pieces: snapshot.pieces.length, mats: snapshot.mats.length });
+    return snapshot;
   }
 
   /** This client was just promoted to host (docs/NETWORKING.md "Host migration"):

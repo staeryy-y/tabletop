@@ -55,23 +55,32 @@ export class SignalingConnection {
   private listeners = new Set<Listener>();
   private closed = false;
   private connectionErrorEmitted = false;
+  private readonly logLabel: string;
   private connectionTimer: number | undefined;
 
   constructor(slug: string, token: string) {
+    this.logLabel = `room=${slug}`;
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    this.ws = new WebSocket(`${proto}//${location.host}/ws/room/${slug}?token=${encodeURIComponent(token)}`);
+    const url = `${proto}//${location.host}/ws/room/${slug}?token=${encodeURIComponent(token)}`;
+    console.info("[rpg-tabletop][signaling] connecting", this.logLabel, `${proto}//${location.host}/ws/room/${slug}`);
+    this.ws = new WebSocket(url);
     this.connectionTimer = window.setTimeout(() => {
       if (this.ws.readyState === WebSocket.CONNECTING) {
         this.emitConnectionError("The table server did not respond in time.");
         this.ws.close();
       }
     }, 15000);
-    this.ws.addEventListener("open", () => this.clearConnectionTimer());
+    this.ws.addEventListener("open", () => {
+      this.clearConnectionTimer();
+      console.info("[rpg-tabletop][signaling] connected", this.logLabel);
+    });
     this.ws.addEventListener("error", () => {
+      console.warn("[rpg-tabletop][signaling] socket error", this.logLabel);
       if (!this.closed) this.emitConnectionError("Unable to connect to the table server.");
     });
     this.ws.addEventListener("close", (event) => {
       this.clearConnectionTimer();
+      console.warn("[rpg-tabletop][signaling] closed", this.logLabel, { code: event.code, reason: event.reason });
       if (!this.closed) {
         const detail = event.code ? ` (connection closed with code ${event.code})` : "";
         this.emitConnectionError(`The connection to the table server was lost${detail}.`);
@@ -80,6 +89,9 @@ export class SignalingConnection {
     this.ws.addEventListener("message", (ev) => {
       try {
         const data = JSON.parse(ev.data) as SignalingEvent;
+        if (data.type === "welcome" || data.type === "you-are-host" || data.type === "host-changed" || data.type === "peer-joined" || data.type === "peer-left") {
+          console.info("[rpg-tabletop][signaling] event", this.logLabel, data.type);
+        }
         for (const listener of this.listeners) listener(data);
       } catch {
         this.emitConnectionError("The table server sent an invalid response.");

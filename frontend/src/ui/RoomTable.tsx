@@ -268,6 +268,7 @@ export function RoomTable({ slug }: { slug: string }) {
       if (event.type === "connection-error") {
         setConnectionError(event.message);
       } else if (event.type === "welcome") {
+        console.info("[rpg-tabletop][room] welcome", { slug, self: event.peerId, host: event.hostPeerId, gameDefRef: event.roomInfo.gameDefRef, peers: event.peers.length });
         mySelfId = event.peerId;
         gmPeerId = event.gmPeerId;
         setSelfId(event.peerId);
@@ -352,11 +353,14 @@ export function RoomTable({ slug }: { slug: string }) {
           const customPkg = customId ? (await packageStore.get(customId))?.pkg : undefined;
           if (disposed) return;
           if (customPkg) {
+            console.info("[rpg-tabletop][room] found local custom package", { slug, packageId: customId });
             const normalized = normalizePackage(customPkg);
             distributor.setLocalPackage(normalized);
             setPkg(normalized);
             loadedPkgRef.current = normalized;
             seedStarterContentIfHost(normalized);
+          } else {
+            console.warn("[rpg-tabletop][room] no local custom package; waiting for host", { slug });
           }
         })();
       } else if (event.type === "peer-joined") {

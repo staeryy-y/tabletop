@@ -148,6 +148,7 @@ export class PackageDistributor {
    * package in the first place, so there's nothing to ask for. */
   requestFromHostIfNeeded(): void {
     if (this.localPackageJson !== null) return;
+    console.info("[rpg-tabletop][package] requesting package from host");
     this.transport.sendToHost({ type: "pkg:request" });
     // Retry briefly across transport negotiation/fallback. The request is idempotent;
     // once any transfer completes, later retries become no-ops.
@@ -160,7 +161,9 @@ export class PackageDistributor {
 
   private sendPackageTo(peerId: string): void {
     if (this.localPackageJson === null) return;
-    for (const message of chunkPackageJson(this.localPackageJson)) this.transport.sendToPeer(peerId, message);
+    const messages = chunkPackageJson(this.localPackageJson);
+    console.info("[rpg-tabletop][package] sending package", { peerId, chunks: messages.length - 2, bytes: this.localPackageJson.length });
+    for (const message of messages) this.transport.sendToPeer(peerId, message);
   }
 
   private handleMessage(fromPeerId: string, message: PackageTransferMessage): void {
@@ -171,6 +174,7 @@ export class PackageDistributor {
     }
     const json = this.reassembler.handleMessage(message);
     if (json === null) return;
+    console.info("[rpg-tabletop][package] package received", { fromPeerId, bytes: json.length });
     try {
       const pkg = JSON.parse(json) as GamePackage;
       this.setLocalPackage(pkg); // ready to redistribute if later promoted to host
