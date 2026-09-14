@@ -213,7 +213,9 @@ export class HostTableSync {
         break;
       }
       case "flip":
+        console.info("[rpg-tabletop][sync] flip request", { fromPeerId, pileId: req.pileId, before: this.model.topCard(req.pileId)?.faceUp ?? null });
         this.model.flip(req.pileId);
+        console.info("[rpg-tabletop][sync] flip applied", { pileId: req.pileId, after: this.model.topCard(req.pileId)?.faceUp ?? null });
         touched.add(req.pileId);
         break;
       case "toggle-hide":
@@ -366,6 +368,12 @@ export class HostTableSync {
     const piles = this.model.allPiles().map((p) => redactPileFor(p, recipientPeerId));
     const pieces = this.model.allPieces();
     const mats = this.model.allMats();
+    console.info("[rpg-tabletop][sync] sending snapshot", {
+      recipientPeerId,
+      piles: piles.map((p) => { const top = p.cards[p.cards.length - 1]; return { id: p.id, cards: p.cards.length, top: top ? { title: top.def.front.title, image: !!top.def.front.image, backImage: !!top.def.back.image, faceUp: top.faceUp, hiddenBy: top.hiddenBy } : null }; }),
+      pieces: pieces.length,
+      mats: mats.length,
+    });
     this.broadcast(recipientPeerId, { type: "snapshot", piles, pieces, mats });
   }
 }

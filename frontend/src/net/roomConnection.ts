@@ -124,6 +124,11 @@ export class RoomConnection {
       if (typeof msg === "object" && msg !== null && (msg as { type?: unknown }).type === "snapshot") {
         const snapshot = msg as { piles?: unknown[]; pieces?: unknown[]; mats?: unknown[] };
         console.info("[rpg-tabletop][sync] snapshot received", { self: this.selfPeerId, host: hostPeerId, piles: snapshot.piles?.length ?? 0, pieces: snapshot.pieces?.length ?? 0, mats: snapshot.mats?.length ?? 0 });
+        console.info("[rpg-tabletop][sync] snapshot card state", (snapshot.piles ?? []).map((pile) => {
+          const cards = (pile as { cards?: Array<{ def?: { front?: { title?: string; image?: string }; back?: { image?: string } }; faceUp?: boolean; hiddenBy?: string | null }> }).cards ?? [];
+          const top = cards[cards.length - 1];
+          return { id: (pile as { id?: string }).id, cards: cards.length, top: top ? { title: top.def?.front?.title, image: !!top.def?.front?.image, backImage: !!top.def?.back?.image, faceUp: top.faceUp, hiddenBy: top.hiddenBy } : null };
+        }));
       }
       this.view.applyEvent(msg as TableEvent);
     });
