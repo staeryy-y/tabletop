@@ -162,6 +162,10 @@ export class HostTableSync {
   /** `fromPeerId` is whoever asked for this — needed for toggle-hide (who's hiding it)
    * and to compute redaction on the resulting broadcast. */
   handleRequest(fromPeerId: string, req: TableRequest): void {
+    if (!isValidRequest(req)) {
+      console.warn("[rpg-tabletop][sync] rejected invalid request", { fromPeerId, type: (req as { type?: unknown })?.type });
+      return;
+    }
     if (req.type === "drag-hint") {
       this.relayHint(fromPeerId, { type: "drag-hint", pileId: req.pileId, x: req.x, y: req.y, byPeerId: fromPeerId });
       return;
@@ -390,6 +394,39 @@ export class HostTableSync {
       : { type: "snapshot", piles, pieces, mats, revision: this.revision };
     this.broadcast(recipientPeerId, snapshot);
   }
+}
+
+/** Runtime guard for the untrusted JSON boundary. TypeScript only protects code
+ * compiled together; guests can still send arbitrary objects over a relay. Keep this
+ * deliberately conservative: malformed coordinates/angles are ignored rather than
+ * contaminating the host model and every peer's next snapshot. */
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isNonEmptyId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 256;
+}
+
+function isValidRequest(req: TableRequest): boolean {
+  if (!req || typeof req !== "object" || typeof req.type !== "string") return false;
+  const r = req as Record<string, unknown>;
+  const idFields = ["pileId", "pieceId", "matId"];
+  for (const field of idFields) if (field in r && !isNonEmptyId(r[field])) return false;
+  for (const field of ["x", "y", "radians", "deltaRadians", "offsetX", "offsetY", "mergeRadius"]) {
+    if (field in r && !isFiniteNumber(r[field])) return false;
+  }
+  if ("mergeRadius" in r && (r.mergeRadius as number) < 0) return false;
+  if (req.type === "spawn" || req.type === "spawn-piece" || req.type === "spawn-mat") {
+    if (!isFiniteNumber(r.x) || !isFiniteNumber(r.y) || !r.def || typeof r.def !== "object") return false;
+  }
+  if (req.type === "spawn-stack") {
+    if (!isFiniteNumber(r.x) || !isFiniteNumber(r.y) || !Array.isArray(r.defs) || r.defs.length === 0) return false;
+  }
+  if (req.type === "collapse-into-stack") {
+    if (!isFiniteNumber(r.x) || !isFiniteNumber(r.y) || !Array.isArray(r.pileIds) || r.pileIds.some((id) => !isNonEmptyId(id))) return false;
+  }
+  return true;
 }
 
 /** Runs on every non-host browser: mirrors whatever the host broadcasts into a local
