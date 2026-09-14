@@ -29,7 +29,7 @@ export const UI_TEXT = {
     setupFailedFallback: "failed to complete setup",
     title: "Finish setting up your account",
     placeholderNotice: (username: string) =>
-      `"${username}" is a placeholder, not a real account yet — pick a real username and password to continue.`,
+      `"${username}" is a placeholder, not a real account yet.`,
     newUsernameLabel: "New username",
     currentPasswordLabel: "Current password",
     newPasswordLabel: "New password",
@@ -40,7 +40,7 @@ export const UI_TEXT = {
 
   roomJoin: {
     loading: "Loading…",
-    subtitle: (hasPassword: boolean) => `No account needed — just a display name${hasPassword ? " and this room's password" : ""}.`,
+    subtitle: (hasPassword: boolean) => `Please enter a display name${hasPassword ? " and this room's password" : ""}.`,
     displayNameLabel: "Display name",
     roomPasswordLabel: "Room password",
     submitBusy: "Joining…",
@@ -49,7 +49,7 @@ export const UI_TEXT = {
 
   newAnonymousRoom: {
     title: "Start a game",
-    subtitle: "No account needed — this room isn't saved anywhere on the server.",
+    subtitle: "",
     roomNameLabel: "Room name",
     passwordLabel: "Password (optional)",
     gameLabel: "Game",
@@ -71,7 +71,7 @@ export const UI_TEXT = {
     yourRoomsHeading: "Your rooms",
     guestLinkLabel: "guest link",
     delete: "Delete",
-    noRoomsHint: "No rooms yet — create one below.",
+    noRoomsHint: "No rooms yet",
     roomNamePlaceholder: "Room name",
     passwordOptionalPlaceholder: "Password (optional)",
     genericFreeformOption: "Generic Freeform",
@@ -95,20 +95,20 @@ export const UI_TEXT = {
     editingHeading: (name: string) => `Edit "${name}"`,
     newPackageHeading: "New game package",
     subtitle:
-      "Rules content — tracks, dice, cards, pieces, macros — for rooms to use. Cards can have images or " +
+      "Rules content: tracks, dice, cards, pieces, macros. For rooms to use. Cards can have images or " +
       "just text; pieces can have images or an emoji/symbol. Lives in this browser only (see " +
-      "docs/DECISIONS.md D14) — export a package to share or back it up.",
+      "docs/DECISIONS.md D14). export a package to share or back it up.",
     setCounts: (cardSets: number, pieceSets: number) => `${cardSets} card set(s), ${pieceSets} piece set(s)`,
     edit: "Edit",
     export: "Export",
     delete: "Delete",
-    noPackagesHint: "No custom packages yet — create one, or import a file.",
+    noPackagesHint: "No custom packages yet",
     newPackageButton: "+ New package",
     newPackageDefaultName: "New Package",
   },
 
   chat: {
-    noMessagesHint: "No messages yet. Say hello, or try /roll 1d20.",
+    noMessagesHint: "Say hello, or try /roll 1d20.",
     quickSheetSummary: (packageName: string) => `Your sheet (${packageName})`,
     inputPlaceholder: "/roll 1d20 + dex, or just chat",
     send: "Send",
@@ -131,9 +131,9 @@ export const UI_TEXT = {
     },
 
     layoutTab: {
-      sectionTitle: "Layout — where everything starts on the table",
+      sectionTitle: "Layout",
       hint: "Drag a token below to set where that set appears when the room starts.",
-      emptyHint: "Add some card sets, piece sets, or mat sets first — then position them here.",
+      emptyHint: "Add some card sets, piece sets, or mat sets first, then position them here.",
       cardsLegend: "Card sets",
       piecesLegend: "Piece sets",
       matsLegend: "Mat sets",
@@ -161,9 +161,9 @@ export const UI_TEXT = {
     },
 
     cardSets: {
-      sectionTitle: "Card sets — each spawns as one labeled, shufflable stack",
+      sectionTitle: "Card sets",
       keyPlaceholder: "set key",
-      labelPlaceholder: "label shown on the table, e.g. Role Cards",
+      labelPlaceholder: "Label",
       removeSet: "Remove set",
       addSet: "+ Add card set",
     },
@@ -294,7 +294,7 @@ export const UI_TEXT = {
     flipAll: (count: number) => `Flip all (${count})`,
     hideUnhideAll: (count: number) => `Hide/unhide all (${count})`,
     collapseIntoDeck: "Collapse into a deck",
-    lockMat: "Lock (GM only can move)",
+    lockMat: "Lock",
     unlockMat: "Unlock",
   },
 };
