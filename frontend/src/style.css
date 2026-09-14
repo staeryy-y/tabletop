@@ -730,6 +730,8 @@ button.hud-icon-button.active {
   gap: 10px;
   justify-content: flex-end;
 }
+.guest-dashboard .button { display: inline-block; padding: 8px 14px; border-radius: 6px; background: var(--accent); color: white; text-decoration: none; }
+.guest-dashboard .button.secondary { background: var(--panel); }
 
 .card-reader-overlay {
   position: fixed; inset: 0; z-index: 10001; display: grid; place-items: center;

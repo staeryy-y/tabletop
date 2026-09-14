@@ -11,6 +11,16 @@
 // more here than being able to browse all the app's button labels as one list.
 
 export const UI_TEXT = {
+  guestDashboard: {
+    title: "RPG Tabletop",
+    home: "Home",
+    signIn: "Sign in",
+    gameManagerHeading: "Game Manager",
+    intro: "Set up a table, invite friends, and play together in your browser.",
+    createRoom: "Create a room",
+    joinRoom: "Join a room",
+    accountHint: "Sign in to manage saved rooms and game packages.",
+  },
   login: {
     loginFailedFallback: "login failed",
     title: "rpg-tabletop",

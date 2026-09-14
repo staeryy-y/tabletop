@@ -9,9 +9,11 @@ import { GamePackages } from "./ui/GamePackages";
 import { NewAnonymousRoom } from "./ui/NewAnonymousRoom";
 import { RoomJoin } from "./ui/RoomJoin";
 import { RoomTable } from "./ui/RoomTable";
+import { GuestDashboard } from "./ui/GuestDashboard";
 
 type Route =
   | { view: "dashboard" }
+  | { view: "login" }
   | { view: "packages" }
   | { view: "new" }
   | { view: "join"; slug: string }
@@ -21,6 +23,7 @@ function parseHash(): Route {
   const hash = location.hash.replace(/^#\/?/, "");
   const [kind, slug] = hash.split("/");
   if (kind === "join" && slug) return { view: "join", slug };
+  if (kind === "login") return { view: "login" };
   if (kind === "room" && slug) return { view: "room", slug };
   if (kind === "packages") return { view: "packages" };
   if (kind === "new") return { view: "new" };
@@ -59,7 +62,7 @@ function App() {
   if (route.view === "new") return <NewAnonymousRoom />;
 
   if (me === undefined) return <div class="centered-page">Loading…</div>;
-  if (me === null) return <Login onLoggedIn={setMe} />;
+  if (me === null) return route.view === "login" ? <Login onLoggedIn={setMe} /> : <GuestDashboard />;
   if (me.mustChangePassword) return <AccountSetup me={me} onDone={setMe} />;
   if (route.view === "packages") return <GamePackages />;
   return <AdminDashboard me={me} onLoggedOut={() => setMe(null)} />;
