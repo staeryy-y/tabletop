@@ -17,7 +17,6 @@ import {
   defaultMatSetPosition,
   defaultPieceSetPosition,
   matEntryOffset,
-  pieceEntryOffset,
 } from "../packages/startingLayout";
 import { loadRoomToken } from "../roomToken";
 import { getRememberedRoomPackageId } from "../roomPackageChoice";
@@ -92,10 +91,11 @@ function pieceSetSpawnsFromPackage(pkg: GamePackage): PieceSpawn[] {
     const fallback = defaultPieceSetPosition(i, pkg.pieceSets.length);
     const anchorX = set.startX ?? fallback.x;
     const anchorY = set.startY ?? fallback.y;
-    let position = 0;
     set.entries.forEach((entry) => {
-      for (let copy = 0; copy < (entry.count ?? 1); copy++, position++) {
-        const offset = pieceEntryOffset(position);
+      for (let copy = 0; copy < (entry.count ?? 1); copy++) {
+        // Multiple copies start as a physical stack: identical pieces overlap and
+        // can then be box-selected/moved as a group instead of scattering setup.
+        const offset = { x: 0, y: 0 };
         spawns.push({ def: { id: `${set.key}:${entry.id}:${copy}`, image: entry.image, symbol: entry.symbol }, x: anchorX + offset.x, y: anchorY + offset.y });
       }
     });

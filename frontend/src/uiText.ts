@@ -313,6 +313,7 @@ export const UI_TEXT = {
     unhide: "Unhide",
     hide: "Hide",
     rotate90: "Rotate 90°",
+    select: "Select",
     shuffle: "Shuffle",
     drawTopCard: "Draw top card",
     remove: "Remove",
