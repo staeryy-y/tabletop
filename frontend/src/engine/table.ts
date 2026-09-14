@@ -137,6 +137,7 @@ export class TableApp implements TableView {
   private matsLayer = new Container();
   private effectsLayer = new Container();
   private flipParticles: Array<{ view: Graphics; vx: number; vy: number; life: number }> = [];
+  private pendingLocalFlips = new Set<string>();
   private effectsConfig: PresentationEffects = { enabled: true, particles: true, intensity: 1 };
   private motionTargets = new Map<string, { view: Container; x: number; y: number; rotation: number }>();
   private matViews = new Map<string, Container>();
@@ -276,6 +277,7 @@ export class TableApp implements TableView {
     this.world.addChild(this.drawTableBackground()); // added first — behind every pile/token
     this.world.addChild(this.matsLayer); // added next — behind every Card/Piece, above the background (D26)
     this.world.addChild(this.effectsLayer); // transient feedback above the table objects
+    this.effectsLayer.zIndex = 10000;
 
     this.app.stage.eventMode = "static";
     this.app.stage.hitArea = this.app.screen;
@@ -360,7 +362,8 @@ export class TableApp implements TableView {
       const moved = previous && (previous.x !== event.pile.x || previous.y !== event.pile.y);
       this.model.setPile(event.pile);
       if (previousFace !== undefined && previousFace !== event.pile.cards[event.pile.cards.length - 1]?.faceUp) {
-        this.spawnFlipParticles(event.pile.x, event.pile.y);
+        if (this.pendingLocalFlips.has(event.pile.id)) this.pendingLocalFlips.delete(event.pile.id);
+        else this.spawnFlipParticles(event.pile.x, event.pile.y);
       }
       if (moved) this.spawnImpactParticles(event.pile.x, event.pile.y, 0x8fd3ff);
       const view = this.views.get(event.pile.id);
@@ -1670,11 +1673,19 @@ export class TableApp implements TableView {
   // there's no ownership lock, matching a physical table. ---
 
   private doFlip(pileId: string): void {
+    const pile = this.model.getPile(pileId);
+    if (!pile || pile.cards.length === 0) return;
+    // Show feedback immediately for the actor. The echoed authoritative event is
+    // suppressed below so local flips do not burst twice, while remote flips still
+    // animate when their event arrives.
+    this.pendingLocalFlips.add(pileId);
+    this.spawnFlipParticles(pile.x, pile.y);
     if (this.syncClient) {
       this.syncClient.sendRequest({ type: "flip", pileId });
       return;
     }
     this.model.flip(pileId);
+    this.pendingLocalFlips.delete(pileId);
     this.redraw(pileId);
   }
 
