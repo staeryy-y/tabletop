@@ -61,6 +61,7 @@ function isRequestSnapshot(msg: unknown): boolean {
 }
 
 export class RoomConnection {
+  private lifecycle: "initializing" | "host" | "peer" | "destroyed" = "initializing";
   private hostSync: HostTableSync | null = null;
   private peerLinks = new Map<string, PeerLink>();
   private pendingPeerIds = new Set<string>();
@@ -91,6 +92,8 @@ export class RoomConnection {
    * that was already in the room before this client became host doesn't wait for its
    * next unrelated state change to catch up. */
   becomeHost(existingPeerIds: string[]): TableSyncClient {
+    if (this.lifecycle === "destroyed") throw new Error("cannot make a destroyed room connection host");
+    this.lifecycle = "host";
     console.info("[rpg-tabletop][sync] becoming host", { self: this.selfPeerId, peers: existingPeerIds });
     this.linkToHost?.close();
     this.linkToHost = null;
@@ -113,6 +116,8 @@ export class RoomConnection {
    * guarantee that the host's push arrives after this peer is actually listening for
    * it — asking again here is what makes catch-up correct instead of merely usual. */
   becomePeerOf(hostPeerId: string): TableSyncClient {
+    if (this.lifecycle === "destroyed") throw new Error("cannot make a destroyed room connection a peer");
+    this.lifecycle = "peer";
     console.info("[rpg-tabletop][sync] linking to host", { self: this.selfPeerId, host: hostPeerId });
     this.teardownHostRole();
     // The peer always initiates the offer to the host — see docs/NETWORKING.md's
@@ -140,7 +145,7 @@ export class RoomConnection {
    * startup catch-up: a custom package can finish transferring after the first table
    * snapshot, and the host may have seeded its cards in that interval. */
   requestSnapshotFromHost(): void {
-    if (this.linkToHost) {
+    if (this.lifecycle === "peer" && this.linkToHost) {
       console.info("[rpg-tabletop][sync] requesting fresh snapshot", { self: this.selfPeerId });
       this.linkToHost.send(REQUEST_SNAPSHOT);
     }
@@ -152,6 +157,7 @@ export class RoomConnection {
    * way a peer gets caught up — see becomePeerOf's own request-snapshot call for why
    * relying on this alone isn't safe. */
   addPeer(peerId: string): void {
+    if (this.lifecycle === "destroyed") return;
     if (peerId === this.selfPeerId || this.peerLinks.has(peerId)) return;
     if (!this.hostSync) {
       this.pendingPeerIds.add(peerId);
@@ -198,19 +204,20 @@ export class RoomConnection {
   /** Send a side-channel message directly to the host — meaningful only while this
    * client is a peer (a harmless no-op otherwise, e.g. before any role is assigned). */
   sendToHost(message: unknown): void {
-    this.linkToHost?.send(message);
+    if (this.lifecycle === "peer") this.linkToHost?.send(message);
   }
 
   /** Send a side-channel message directly to one connected peer — meaningful only
    * while this client is host (a harmless no-op if that peer isn't linked, e.g. it
    * already left, or this client isn't host at all). */
   sendToPeer(peerId: string, message: unknown): void {
-    this.peerLinks.get(peerId)?.send(message);
+    if (this.lifecycle === "host") this.peerLinks.get(peerId)?.send(message);
   }
 
   /** Send a side-channel message to every currently-connected peer — meaningful only
    * while this client is host (a harmless no-op, sending to no one, otherwise). */
   broadcastToPeers(message: unknown): void {
+    if (this.lifecycle !== "host") return;
     for (const link of this.peerLinks.values()) link.send(message);
   }
 
@@ -249,6 +256,8 @@ export class RoomConnection {
   }
 
   destroy(): void {
+    if (this.lifecycle === "destroyed") return;
+    this.lifecycle = "destroyed";
     this.linkToHost?.close();
     this.linkToHost = null;
     this.teardownHostRole();
