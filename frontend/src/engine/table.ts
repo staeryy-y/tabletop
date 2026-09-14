@@ -165,6 +165,8 @@ export class TableApp implements TableView {
    * comment for why screen space matters here. This replaces the old click-drag-to-pan
    * gesture (WASD already covers panning) — see docs/DECISIONS.md. */
   private selectedPileIds = new Set<string>();
+  private selectedPieceIds = new Set<string>();
+  private pieceSelectionOutlines = new Map<string, Graphics>();
   private selectionOutlines = new Map<string, Graphics>();
   private boxSelect: { startX: number; startY: number; endX: number; endY: number; rect: Graphics } | null = null;
   /** A drag that moves every selected pile together, rigidly, by the same screen-space
@@ -172,6 +174,7 @@ export class TableApp implements TableView {
    * is already part of a 2+ selection (see beginDrag). Positions are only committed
    * (one move-pile request/model mutation per pile) on release; see onPointerUp. */
   private groupDragging: { startPositions: Map<string, { x: number; y: number }>; startLocalX: number; startLocalY: number; dx: number; dy: number } | null = null;
+  private groupPieceDragging: { startPositions: Map<string, { x: number; y: number }>; startLocalX: number; startLocalY: number; dx: number; dy: number } | null = null;
   /** Rotating the whole selection together around its centroid ("center of mass") —
    * see beginGroupRotate. `delta` is the running rotation since the gesture started,
    * updated every pointermove and read back on release to compute each pile's final
@@ -805,6 +808,11 @@ export class TableApp implements TableView {
     view.on("pointerdown", (e: FederatedPointerEvent) => {
       e.stopPropagation();
       if (e.button === 2) return; // handled by rightclick below
+      if (this.selectedPieceIds.size > 1 && this.selectedPieceIds.has(piece.id)) {
+        this.beginGroupPieceDrag(e);
+        return;
+      }
+      if (!this.selectedPieceIds.has(piece.id)) this.clearSelection();
       this.beginDragPiece(piece.id, e);
     });
     view.on("rightclick", (e: FederatedPointerEvent) => {
@@ -852,6 +860,8 @@ export class TableApp implements TableView {
       this.world.removeChild(view);
       this.pieceViews.delete(pieceId);
     }
+    this.selectedPieceIds.delete(pieceId);
+    this.pieceSelectionOutlines.delete(pieceId);
   }
 
   private doRemovePiece(pieceId: string): void {
@@ -885,7 +895,9 @@ export class TableApp implements TableView {
     menu.style.top = `${screenY}px`;
 
     const items: [string, () => void][] = [
+      [T.select, () => this.togglePieceSelection(pieceId)],
       [T.rotate90, () => this.rotatePiece90(pieceId)],
+      ...(this.selectedPieceIds.size > 1 && this.selectedPieceIds.has(pieceId) ? [[`${T.rotate90} (selected)`, () => this.rotateSelectedPieces()] as [string, () => void]] : []),
       [T.remove, () => this.doRemovePiece(pieceId)],
     ];
     for (const [label, action] of items) {
@@ -899,6 +911,42 @@ export class TableApp implements TableView {
     }
     document.body.appendChild(menu);
     this.menuEl = menu;
+  }
+
+  private togglePieceSelection(pieceId: string): void {
+    const view = this.pieceViews.get(pieceId);
+    if (!view) return;
+    if (this.selectedPieceIds.has(pieceId)) {
+      this.selectedPieceIds.delete(pieceId);
+      const outline = this.pieceSelectionOutlines.get(pieceId);
+      if (outline) view.removeChild(outline);
+      this.pieceSelectionOutlines.delete(pieceId);
+      return;
+    }
+    this.selectedPieceIds.add(pieceId);
+    const outline = new Graphics();
+    outline.circle(0, 0, PIECE_SIZE / 2 + 4);
+    outline.stroke({ width: 3, color: SELECTION_OUTLINE_COLOR });
+    view.addChildAt(outline, 0);
+    this.pieceSelectionOutlines.set(pieceId, outline);
+  }
+
+  private beginGroupPieceDrag(e: FederatedPointerEvent): void {
+    const local = this.world.toLocal(e.global);
+    const startPositions = new Map<string, { x: number; y: number }>();
+    for (const id of this.selectedPieceIds) {
+      const piece = this.model.getPiece(id);
+      if (piece) startPositions.set(id, { x: piece.x, y: piece.y });
+    }
+    this.groupPieceDragging = { startPositions, startLocalX: local.x, startLocalY: local.y, dx: 0, dy: 0 };
+    for (const id of startPositions.keys()) {
+      const view = this.pieceViews.get(id);
+      if (view) { view.alpha = 0.85; view.zIndex = 1000; }
+    }
+  }
+
+  private rotateSelectedPieces(): void {
+    for (const pieceId of this.selectedPieceIds) this.rotatePiece90(pieceId);
   }
 
   // --- Wiring a MatState to an on-screen Container — see MatState's own doc comment
@@ -1085,6 +1133,13 @@ export class TableApp implements TableView {
 
   private clearSelection(): void {
     for (const pileId of [...this.selectedPileIds]) this.deselect(pileId);
+    for (const pieceId of [...this.selectedPieceIds]) {
+      const view = this.pieceViews.get(pieceId);
+      const outline = this.pieceSelectionOutlines.get(pieceId);
+      if (outline && view) view.removeChild(outline);
+      this.pieceSelectionOutlines.delete(pieceId);
+      this.selectedPieceIds.delete(pieceId);
+    }
   }
 
   private selectionCentroid(): { x: number; y: number } | null {
@@ -1368,6 +1423,11 @@ export class TableApp implements TableView {
       this.draggingWholePile.y = local.y - this.draggingWholePile.offsetY;
       this.draggingWholePile.view.position.set(this.draggingWholePile.x, this.draggingWholePile.y);
       this.maybeSendDragHint(this.draggingWholePile.pileId, this.draggingWholePile.x, this.draggingWholePile.y);
+    } else if (this.groupPieceDragging) {
+      const g = this.groupPieceDragging;
+      g.dx = local.x - g.startLocalX;
+      g.dy = local.y - g.startLocalY;
+      for (const [pieceId, start] of g.startPositions) this.pieceViews.get(pieceId)?.position.set(start.x + g.dx, start.y + g.dy);
     } else if (this.rotatingPiece) {
       const angle = Math.atan2(local.x - this.rotatingPiece.view.position.x, -(local.y - this.rotatingPiece.view.position.y));
       this.rotatingPiece.radians = angle;
@@ -1405,6 +1465,11 @@ export class TableApp implements TableView {
         }
         this.clearSelection();
         for (const pileId of inBox) this.select(pileId);
+        for (const [pieceId, view] of this.pieceViews) {
+          const global = view.getGlobalPosition();
+          if (global.x < minX || global.x > maxX || global.y < minY || global.y > maxY) continue;
+          this.togglePieceSelection(pieceId);
+        }
       }
     }
 
@@ -1471,6 +1536,18 @@ export class TableApp implements TableView {
       const { x, y } = view.position;
       if (this.syncClient) this.syncClient.sendRequest({ type: "move-piece", pieceId, x, y });
       else this.model.movePiece(pieceId, x, y);
+    }
+
+    if (this.groupPieceDragging) {
+      const { startPositions, dx, dy } = this.groupPieceDragging;
+      this.groupPieceDragging = null;
+      for (const [pieceId, start] of startPositions) {
+        const x = start.x + dx, y = start.y + dy;
+        const view = this.pieceViews.get(pieceId);
+        if (view) view.alpha = 1;
+        if (this.syncClient) this.syncClient.sendRequest({ type: "move-piece", pieceId, x, y });
+        else this.model.movePiece(pieceId, x, y);
+      }
     }
 
     if (this.draggingWholePile) {
