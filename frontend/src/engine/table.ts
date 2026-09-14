@@ -251,6 +251,10 @@ export class TableApp implements TableView {
   async init(container: HTMLElement): Promise<void> {
     await this.app.init({ resizeTo: container, background: "#2b2a33", antialias: false });
     container.appendChild(this.app.canvas);
+    // Drag handles extend beyond their card and can otherwise be covered by a
+    // neighboring pile. Several drag paths temporarily raise a view's zIndex; enable
+    // Pixi's sorting so that raise actually affects both drawing and hit testing.
+    this.world.sortableChildren = true;
     this.app.stage.addChild(this.world);
     this.world.position.set(container.clientWidth / 2, container.clientHeight / 2);
     this.world.addChild(this.drawTableBackground()); // added first — behind every pile/token

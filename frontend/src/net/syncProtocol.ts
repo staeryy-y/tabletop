@@ -187,9 +187,11 @@ export class HostTableSync {
         break;
       }
       case "pick-up-and-drop": {
+        const before = this.model.getPile(req.pileId)?.cards.length ?? 0;
         const floating = this.model.pickUpTop(req.pileId);
         if (!floating) return; // the pile was already gone (a race with another request) — nothing to do
         const result = this.model.dropPile(floating, req.x, req.y, req.mergeRadius);
+        console.info("[rpg-tabletop][sync] stack drag", { fromPeerId, pileId: req.pileId, before, remainder: this.model.getPile(req.pileId)?.cards.length ?? 0, result: result.kind, targetId: result.kind === "merged" ? result.targetId : result.pile.id });
         touched.add(req.pileId).add(floating.id);
         touched.add(result.kind === "merged" ? result.targetId : result.pile.id);
         break;
