@@ -273,6 +273,9 @@ export const UI_TEXT = {
     connectingHint: "Connecting…",
     loadingTitle: "Preparing table…",
     loadingText: "Receiving the game package and table state. The game will appear when it is ready.",
+    connectionErrorTitle: "Couldn’t connect to the table",
+    retryConnection: "Try again",
+    returnToJoin: "Back to room join",
 
     // Each help line is split into a bolded lead phrase + the rest of the sentence, so
     // the panel can render the lead as <strong> without regex-splitting one combined

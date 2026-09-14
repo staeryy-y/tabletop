@@ -761,6 +761,8 @@ button.hud-icon-button.active {
   background: var(--bg); padding: 24px;
 }
 .room-loading p { max-width: 380px; margin: 0; }
+.room-error button { margin-top: 8px; }
+.room-error a { color: var(--accent); }
 
 /* Chat + roll + macros */
 .chat {

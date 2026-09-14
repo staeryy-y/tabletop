@@ -160,6 +160,7 @@ export function RoomTable({ slug }: { slug: string }) {
   const chatDistributorRef = useRef<ChatDistributor | null>(null);
   const [peers, setPeers] = useState<Map<string, Peer>>(new Map());
   const [selfId, setSelfId] = useState<string | null>(null);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const [hostId, setHostId] = useState<string | null>(null);
   const [gmId, setGmId] = useState<string | null>(null);
   const [roomName, setRoomName] = useState(slug);
@@ -178,6 +179,7 @@ export function RoomTable({ slug }: { slug: string }) {
       return;
     }
     setDisplayName(token.displayName);
+    setConnectionError(null);
 
     let disposed = false;
 
@@ -263,7 +265,9 @@ export function RoomTable({ slug }: { slug: string }) {
     window.addEventListener("pagehide", persistSnapshotIfHost);
 
     const unsubscribe = conn.on((event) => {
-      if (event.type === "welcome") {
+      if (event.type === "connection-error") {
+        setConnectionError(event.message);
+      } else if (event.type === "welcome") {
         mySelfId = event.peerId;
         gmPeerId = event.gmPeerId;
         setSelfId(event.peerId);
@@ -479,10 +483,18 @@ export function RoomTable({ slug }: { slug: string }) {
     <div class="room-page">
       <div class="table-canvas" ref={canvasHost} />
 
-      {!selfId && (
+      {!selfId && !connectionError && (
         <div class="room-loading" role="status">
           <h2>{T.loadingTitle}</h2>
           <p>{T.loadingText}</p>
+        </div>
+      )}
+      {connectionError && (
+        <div class="room-loading room-error" role="alert">
+          <h2>{T.connectionErrorTitle}</h2>
+          <p>{connectionError}</p>
+          <button type="button" onClick={() => location.reload()}>{T.retryConnection}</button>
+          <a href={`#/join/${slug}`}>{T.returnToJoin}</a>
         </div>
       )}
 

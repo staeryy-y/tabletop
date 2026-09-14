@@ -25,6 +25,7 @@ export interface Peer {
 }
 
 export type SignalingEvent =
+  | { type: "connection-error"; message: string }
   | {
       type: "welcome";
       peerId: string;
@@ -52,14 +53,51 @@ type Listener = (event: SignalingEvent) => void;
 export class SignalingConnection {
   private ws: WebSocket;
   private listeners = new Set<Listener>();
+  private closed = false;
+  private connectionErrorEmitted = false;
+  private connectionTimer: number | undefined;
 
   constructor(slug: string, token: string) {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     this.ws = new WebSocket(`${proto}//${location.host}/ws/room/${slug}?token=${encodeURIComponent(token)}`);
-    this.ws.addEventListener("message", (ev) => {
-      const data = JSON.parse(ev.data) as SignalingEvent;
-      for (const listener of this.listeners) listener(data);
+    this.connectionTimer = window.setTimeout(() => {
+      if (this.ws.readyState === WebSocket.CONNECTING) {
+        this.emitConnectionError("The table server did not respond in time.");
+        this.ws.close();
+      }
+    }, 15000);
+    this.ws.addEventListener("open", () => this.clearConnectionTimer());
+    this.ws.addEventListener("error", () => {
+      if (!this.closed) this.emitConnectionError("Unable to connect to the table server.");
     });
+    this.ws.addEventListener("close", (event) => {
+      this.clearConnectionTimer();
+      if (!this.closed) {
+        const detail = event.code ? ` (connection closed with code ${event.code})` : "";
+        this.emitConnectionError(`The connection to the table server was lost${detail}.`);
+      }
+    });
+    this.ws.addEventListener("message", (ev) => {
+      try {
+        const data = JSON.parse(ev.data) as SignalingEvent;
+        for (const listener of this.listeners) listener(data);
+      } catch {
+        this.emitConnectionError("The table server sent an invalid response.");
+      }
+    });
+  }
+
+  private clearConnectionTimer(): void {
+    if (this.connectionTimer !== undefined) {
+      window.clearTimeout(this.connectionTimer);
+      this.connectionTimer = undefined;
+    }
+  }
+
+  private emitConnectionError(message: string): void {
+    if (this.connectionErrorEmitted) return;
+    this.connectionErrorEmitted = true;
+    for (const listener of this.listeners) listener({ type: "connection-error", message });
   }
 
   on(listener: Listener): () => void {
@@ -68,7 +106,7 @@ export class SignalingConnection {
   }
 
   send(message: Record<string, unknown>): void {
-    this.ws.send(JSON.stringify(message));
+    if (this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(message));
   }
 
   /** Update this peer's own color and/or eyes-closed state; either field is optional
@@ -84,6 +122,8 @@ export class SignalingConnection {
   }
 
   close(): void {
+    this.closed = true;
+    this.clearConnectionTimer();
     this.ws.close();
   }
 }
