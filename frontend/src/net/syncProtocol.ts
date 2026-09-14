@@ -141,6 +141,7 @@ export type Broadcast = (recipientPeerId: string, event: TableEvent) => void;
 /** Runs on the host's browser: owns the canonical TableModel, applies every peer's (and
  * its own) requests to it, and broadcasts the outcome. */
 export class HostTableSync {
+  private lastPickUpAt = new Map<string, number>();
   constructor(
     private model: TableModel,
     private broadcast: Broadcast,
@@ -187,6 +188,11 @@ export class HostTableSync {
         break;
       }
       case "pick-up-and-drop": {
+        const dedupeKey = `${fromPeerId}:${req.pileId}`;
+        const now = performance.now();
+        const previous = this.lastPickUpAt.get(dedupeKey) ?? -Infinity;
+        if (now - previous < 150) return;
+        this.lastPickUpAt.set(dedupeKey, now);
         const before = this.model.getPile(req.pileId)?.cards.length ?? 0;
         const floating = this.model.pickUpTop(req.pileId);
         if (!floating) return; // the pile was already gone (a race with another request) — nothing to do
