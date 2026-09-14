@@ -334,7 +334,12 @@ export class HostTableSync {
     for (const pileId of pileIds) {
       const pile = this.model.getPile(pileId);
       for (const recipient of this.recipients()) {
-        this.broadcast(recipient, pile ? { type: "pile-upserted", pile: redactPileFor(pile, recipient) } : { type: "pile-removed", pileId });
+        // The host's own model is canonical and must never be replaced by a redacted
+        // view of a hidden card. Redaction applies only to other peers; otherwise a
+        // guest hiding a card would overwrite the host's front with the card back on
+        // the next rotate/flip/update broadcast.
+        const visiblePile = pile && recipient !== this.hostPeerId ? redactPileFor(pile, recipient) : pile;
+        this.broadcast(recipient, visiblePile ? { type: "pile-upserted", pile: visiblePile } : { type: "pile-removed", pileId });
       }
     }
   }
