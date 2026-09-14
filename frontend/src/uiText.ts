@@ -100,7 +100,7 @@ export const UI_TEXT = {
       "Rules content: tracks, dice, cards, pieces, macros. For rooms to use. Cards can have images or " +
       "just text; pieces can have images or an emoji/symbol. Lives in this browser only (see " +
       "docs/DECISIONS.md D14). export a package to share or back it up.",
-    setCounts: (cardSets: number, pieceSets: number) => `${cardSets} card set(s), ${pieceSets} piece set(s)`,
+    setCounts: (cards: number, pieces: number, mats: number) => `${cards} card(s), ${pieces} piece(s), ${mats} mat(s)`,
     edit: "Edit",
     export: "Export",
     delete: "Delete",
@@ -203,6 +203,7 @@ export const UI_TEXT = {
       keyPlaceholder: "set key",
       removeSet: "Remove set",
       addSet: "+ Add piece set",
+      copyCountLabel: "Copies",
     },
 
     pieceEntries: {
@@ -218,6 +219,7 @@ export const UI_TEXT = {
       modalImageLabel: "Image (optional, instead of a symbol)",
       modalConnectorsLabel: "Connectors (optional)",
       createButton: "Create piece",
+      copyCountLabel: "Copies",
     },
 
     matSets: {
@@ -225,6 +227,7 @@ export const UI_TEXT = {
       keyPlaceholder: "set key",
       removeSet: "Remove set",
       addSet: "+ Add mat set",
+      copyCountLabel: "Copies",
     },
 
     matEntries: {
@@ -238,11 +241,12 @@ export const UI_TEXT = {
       modalTitle: "New mat",
       modalSymbolLabel: "Symbol/emoji",
       modalImageLabel: "Image (optional, instead of a symbol)",
-      textPlaceholder: "Rule-sheet text (optional)",
+      textPlaceholder: "Rule-sheet text (optional; text-only mats auto-size)",
       widthLabel: "Width",
       heightLabel: "Height",
       backgroundLabel: "Background color",
       createButton: "Create mat",
+      copyCountLabel: "Copies",
     },
 
     macros: {

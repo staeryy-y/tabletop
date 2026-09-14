@@ -89,7 +89,7 @@ export function GamePackages() {
             {packages.map((record) => (
               <li key={record.id}>
                 <strong>{record.pkg.name}</strong>
-                <span class="hint"> &middot; {T.setCounts(record.pkg.cardSets.length, record.pkg.pieceSets.length)} &middot; </span>
+                <span class="hint"> &middot; {T.setCounts(record.pkg.cardSets.reduce((n, s) => n + s.entries.reduce((m, e) => m + (e.count ?? 1), 0), 0), record.pkg.pieceSets.reduce((n, s) => n + s.entries.reduce((m, e) => m + (e.count ?? 1), 0), 0), record.pkg.matSets.reduce((n, s) => n + s.entries.reduce((m, e) => m + (e.count ?? 1), 0), 0))} &middot; </span>
                 <button onClick={() => setEditing(record)}>{T.edit}</button>{" "}
                 <button onClick={() => exportPackage(record)}>{T.export}</button>{" "}
                 <button onClick={() => remove(record.id)}>{T.delete}</button>

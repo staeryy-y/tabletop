@@ -58,6 +58,10 @@ art window and readable title/rules bands. Authors may set `image_fit: contain` 
 default, showing the whole image) or `image_fit: cover` to crop the edges and fill the
 art window.
 
+Piece and mat entries also accept `count` (default `1`) to place multiple copies during
+room setup. Text-only mats are valid; when no dimensions are supplied, they auto-size
+to fit their text.
+
 ```yaml
 cards:
   - set: event          # just a label, for organizing the starting layout

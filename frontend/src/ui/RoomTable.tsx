@@ -92,9 +92,12 @@ function pieceSetSpawnsFromPackage(pkg: GamePackage): PieceSpawn[] {
     const fallback = defaultPieceSetPosition(i, pkg.pieceSets.length);
     const anchorX = set.startX ?? fallback.x;
     const anchorY = set.startY ?? fallback.y;
-    set.entries.forEach((entry, j) => {
-      const offset = pieceEntryOffset(j);
-      spawns.push({ def: { id: `${set.key}:${entry.id}`, image: entry.image, symbol: entry.symbol }, x: anchorX + offset.x, y: anchorY + offset.y });
+    let position = 0;
+    set.entries.forEach((entry) => {
+      for (let copy = 0; copy < (entry.count ?? 1); copy++, position++) {
+        const offset = pieceEntryOffset(position);
+        spawns.push({ def: { id: `${set.key}:${entry.id}:${copy}`, image: entry.image, symbol: entry.symbol }, x: anchorX + offset.x, y: anchorY + offset.y });
+      }
     });
   });
   return spawns;
@@ -115,14 +118,17 @@ function matSetSpawnsFromPackage(pkg: GamePackage): MatSpawn[] {
     const fallback = defaultMatSetPosition(i, pkg.matSets.length);
     const anchorX = set.startX ?? fallback.x;
     const anchorY = set.startY ?? fallback.y;
-    set.entries.forEach((entry, j) => {
-      const offset = matEntryOffset(j);
-      spawns.push({
-        def: { id: `${set.key}:${entry.id}`, image: entry.image, symbol: entry.symbol, text: entry.text, background: entry.background, width: entry.width, height: entry.height },
+    let position = 0;
+    set.entries.forEach((entry) => {
+      for (let copy = 0; copy < (entry.count ?? 1); copy++, position++) {
+        const offset = matEntryOffset(position);
+        spawns.push({
+        def: { id: `${set.key}:${entry.id}:${copy}`, image: entry.image, symbol: entry.symbol, text: entry.text, background: entry.background, width: entry.width, height: entry.height },
         x: anchorX + offset.x,
         y: anchorY + offset.y,
         locked: entry.locked ?? false,
-      });
+        });
+      }
     });
   });
   return spawns;
@@ -473,7 +479,7 @@ export function RoomTable({ slug }: { slug: string }) {
     <div class="room-page">
       <div class="table-canvas" ref={canvasHost} />
 
-      {(!selfId || !pkg) && (
+      {!selfId && (
         <div class="room-loading" role="status">
           <h2>{T.loadingTitle}</h2>
           <p>{T.loadingText}</p>

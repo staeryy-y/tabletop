@@ -51,6 +51,7 @@ export interface PieceEntry {
   image?: string;
   symbol?: string;
   connectors?: string[];
+  count?: number;
 }
 
 export interface PieceSet {
@@ -82,6 +83,7 @@ export interface MatEntry {
   background?: number;
   width?: number;
   height?: number;
+  count?: number;
 }
 
 export interface MatSet {
@@ -209,6 +211,7 @@ export function validatePackage(pkg: GamePackage): string[] {
     if (pieceSetKeys.has(set.key)) errors.push(`Duplicate piece set key "${set.key}".`);
     pieceSetKeys.add(set.key);
     for (const entry of set.entries) {
+      if (entry.count !== undefined && (!Number.isInteger(entry.count) || entry.count < 1)) errors.push(`Piece in set "${set.key}" (id "${entry.id}") needs a whole-number copy count of at least 1.`);
       if (!entry.image && !entry.symbol) {
         errors.push(`A piece in set "${set.key}" (id "${entry.id}") needs either an image or a symbol.`);
       }
@@ -223,7 +226,8 @@ export function validatePackage(pkg: GamePackage): string[] {
     if (matSetKeys.has(set.key)) errors.push(`Duplicate mat set key "${set.key}".`);
     matSetKeys.add(set.key);
     for (const entry of set.entries) {
-      if (!entry.image && !entry.symbol) {
+      if (entry.count !== undefined && (!Number.isInteger(entry.count) || entry.count < 1)) errors.push(`Mat in set "${set.key}" (id "${entry.id}") needs a whole-number copy count of at least 1.`);
+      if (!entry.image && !entry.symbol && !entry.text?.trim()) {
         errors.push(`A mat in set "${set.key}" (id "${entry.id}") needs either an image or a symbol.`);
       }
       if (entry.image && entry.symbol) {

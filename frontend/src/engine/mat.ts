@@ -22,6 +22,12 @@ export interface MatDef {
 }
 
 function dimensions(def: MatDef): { width: number; height: number } {
+  if (def.text?.trim() && def.width === undefined && def.height === undefined) {
+    const lines = def.text.split("\n");
+    const width = Math.min(520, Math.max(180, Math.max(...lines.map((line) => line.length), 1) * 8 + 32));
+    const height = Math.max(90, lines.length * 20 + 28);
+    return { width, height };
+  }
   return { width: Math.max(80, def.width ?? MAT_WIDTH), height: Math.max(60, def.height ?? MAT_HEIGHT) };
 }
 

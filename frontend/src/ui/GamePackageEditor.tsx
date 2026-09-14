@@ -397,7 +397,7 @@ function CardSetsEditor({ cardSets, onChange }: { cardSets: CardSet[]; onChange:
   }
 
   return (
-    <Section title={t.sectionTitle}>
+    <Section title={`${t.sectionTitle} (${cardSets.reduce((n, s) => n + s.entries.reduce((m, e) => m + (e.count ?? 1), 0), 0)} cards)`}>
       {cardSets.map((set, i) => (
         <div class="editor-subsection" key={i}>
           <div class="editor-row">
@@ -568,7 +568,7 @@ function PieceSetsEditor({ pieceSets, onChange }: { pieceSets: PieceSet[]; onCha
   }
 
   return (
-    <Section title={t.sectionTitle}>
+    <Section title={`${t.sectionTitle} (${pieceSets.reduce((n, s) => n + s.entries.reduce((m, e) => m + (e.count ?? 1), 0), 0)} pieces)`}>
       {pieceSets.map((set, i) => (
         <div class="editor-subsection" key={i}>
           <div class="editor-row">
@@ -590,6 +590,7 @@ function NewPieceModal({ onCreate, onCancel }: { onCreate: (entry: PieceEntry) =
   const [symbol, setSymbol] = useState(t.newPieceDefaultSymbol);
   const [image, setImage] = useState<string | undefined>(undefined);
   const [connectorsText, setConnectorsText] = useState("");
+  const [count, setCount] = useState(1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -614,6 +615,7 @@ function NewPieceModal({ onCreate, onCancel }: { onCreate: (entry: PieceEntry) =
       symbol: image ? undefined : symbol || t.newPieceDefaultSymbol,
       image,
       connectors: connectors.length ? connectors : undefined,
+      count,
     });
   }
 
@@ -640,6 +642,7 @@ function NewPieceModal({ onCreate, onCancel }: { onCreate: (entry: PieceEntry) =
         {t.modalConnectorsLabel}
         <input value={connectorsText} placeholder={t.connectorsPlaceholder} onInput={(e) => setConnectorsText((e.target as HTMLInputElement).value)} />
       </label>
+      <label>{t.copyCountLabel}<input type="number" min="1" step="1" value={count} onInput={(e) => setCount(Number((e.target as HTMLInputElement).value) || 1)} /></label>
       {busy && <span class="hint">{t.readingHint}</span>}
       {error && <p class="error">{error}</p>}
       <div class="modal-actions">
@@ -690,6 +693,7 @@ function PieceEntriesEditor({ entries, onChange }: { entries: PieceEntry[]; onCh
               onInput={(e) => update(i, { symbol: (e.target as HTMLInputElement).value || undefined, image: (e.target as HTMLInputElement).value ? undefined : entry.image })}
             />
             <input type="file" accept="image/*" onChange={(e) => uploadImage(i, (e.target as HTMLInputElement).files?.[0])} />
+            <label>{t.copyCountLabel}<input type="number" min="1" step="1" value={entry.count ?? 1} onInput={(e) => update(i, { count: Number((e.target as HTMLInputElement).value) })} /></label>
             <input
               value={entry.connectors?.join(",") ?? ""}
               placeholder={t.connectorsPlaceholder}
@@ -734,7 +738,7 @@ function MatSetsEditor({ matSets, onChange }: { matSets: MatSet[]; onChange: (m:
   }
 
   return (
-    <Section title={t.sectionTitle}>
+    <Section title={`${t.sectionTitle} (${matSets.reduce((n, s) => n + s.entries.reduce((m, e) => m + (e.count ?? 1), 0), 0)} mats)`}>
       {matSets.map((set, i) => (
         <div class="editor-subsection" key={i}>
           <div class="editor-row">
@@ -759,6 +763,7 @@ function NewMatModal({ onCreate, onCancel }: { onCreate: (entry: MatEntry) => vo
   const [background, setBackground] = useState("#3d4a3d");
   const [width, setWidth] = useState(220);
   const [height, setHeight] = useState(160);
+  const [count, setCount] = useState(1);
   const [locked, setLocked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -784,9 +789,9 @@ function NewMatModal({ onCreate, onCancel }: { onCreate: (entry: MatEntry) => vo
       image,
       text: text.trim() || undefined,
       background: Number.parseInt(background.slice(1), 16),
-      width: Math.max(80, width),
-      height: Math.max(60, height),
+      ...(text.trim() ? {} : { width: Math.max(80, width), height: Math.max(60, height) }),
       locked: locked || undefined,
+      count,
     });
   }
 
@@ -831,6 +836,7 @@ function NewMatModal({ onCreate, onCancel }: { onCreate: (entry: MatEntry) => vo
         <input type="checkbox" checked={locked} onChange={(e) => setLocked((e.target as HTMLInputElement).checked)} />
         {t.startsLockedLabel}
       </label>
+      <label>{t.copyCountLabel}<input type="number" min="1" step="1" value={count} onInput={(e) => setCount(Number((e.target as HTMLInputElement).value) || 1)} /></label>
       {busy && <span class="hint">{t.readingHint}</span>}
       {error && <p class="error">{error}</p>}
       <div class="modal-actions">
@@ -881,12 +887,13 @@ function MatEntriesEditor({ entries, onChange }: { entries: MatEntry[]; onChange
               onInput={(e) => update(i, { symbol: (e.target as HTMLInputElement).value || undefined, image: (e.target as HTMLInputElement).value ? undefined : entry.image })}
             />
             <input type="file" accept="image/*" onChange={(e) => uploadImage(i, (e.target as HTMLInputElement).files?.[0])} />
+            <label>{t.copyCountLabel}<input type="number" min="1" step="1" value={entry.count ?? 1} onInput={(e) => update(i, { count: Number((e.target as HTMLInputElement).value) })} /></label>
             <textarea value={entry.text ?? ""} placeholder={t.textPlaceholder} onInput={(e) => update(i, { text: (e.target as HTMLTextAreaElement).value || undefined })} />
-            <div class="editor-row">
+            {!entry.text?.trim() && <div class="editor-row">
               <input type="number" min="80" value={entry.width ?? 220} aria-label={t.widthLabel} onInput={(e) => update(i, { width: Number((e.target as HTMLInputElement).value) || undefined })} />
               <input type="number" min="60" value={entry.height ?? 160} aria-label={t.heightLabel} onInput={(e) => update(i, { height: Number((e.target as HTMLInputElement).value) || undefined })} />
               <input type="color" value={colorToCss(entry.background) ?? "#3d4a3d"} aria-label={t.backgroundLabel} onInput={(e) => update(i, { background: Number.parseInt((e.target as HTMLInputElement).value.slice(1), 16) })} />
-            </div>
+            </div>}
             <label class="checkbox">
               <input type="checkbox" checked={entry.locked ?? false} onChange={(e) => update(i, { locked: (e.target as HTMLInputElement).checked || undefined })} />
               {t.startsLockedLabel}

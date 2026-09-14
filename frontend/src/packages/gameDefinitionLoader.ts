@@ -52,6 +52,7 @@ interface YamlPieceEntry {
   image?: string;
   symbol?: string;
   connectors?: string[];
+  count?: number;
 }
 interface YamlPieceSet {
   set: string;
@@ -67,6 +68,7 @@ interface YamlMatEntry {
   background?: number;
   width?: number;
   height?: number;
+  count?: number;
 }
 interface YamlMatSet {
   set: string;
@@ -116,7 +118,7 @@ function mapCardSet(s: YamlCardSet): CardSet {
 }
 
 function mapPieceEntry(e: YamlPieceEntry): PieceEntry {
-  return { id: e.id, image: e.image ?? e.front?.image, symbol: e.symbol, connectors: e.connectors };
+  return { id: e.id, image: e.image ?? e.front?.image, symbol: e.symbol, connectors: e.connectors, count: e.count };
 }
 
 function mapPieceSet(s: YamlPieceSet): PieceSet {
@@ -124,7 +126,7 @@ function mapPieceSet(s: YamlPieceSet): PieceSet {
 }
 
 function mapMatEntry(e: YamlMatEntry): MatEntry {
-  return { id: e.id, image: e.image ?? e.front?.image, symbol: e.symbol, locked: e.locked, text: e.text, background: e.background, width: e.width, height: e.height };
+  return { id: e.id, image: e.image ?? e.front?.image, symbol: e.symbol, locked: e.locked, text: e.text, background: e.background, width: e.width, height: e.height, count: e.count };
 }
 
 function mapMatSet(s: YamlMatSet): MatSet {

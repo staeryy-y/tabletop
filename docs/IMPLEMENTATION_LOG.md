@@ -37,6 +37,13 @@ this log. The backend suite remains listed at 105 from its last verified run.
 
 ## Implemented, beyond the milestone checklist
 
+- Piece and mat entries now support validated copy counts, and the editor shows total
+  card/piece/mat counts in each section and in the package list. Starting setup fans out
+  the requested number of piece/mat copies. Text-only mats no longer require a symbol or
+  image and auto-size when width/height are omitted. Host readiness no longer waits on
+  optional package metadata, preventing a valid host from being stuck on the loading
+  screen.
+
 - Card clicks no longer enter the pickup/drop mutation path unless the pointer actually
   moves. This prevents hidden-card reader popups from racing a drag and losing their
   face; a click is now strictly read-only, while a real drag still splits/moves cards.
