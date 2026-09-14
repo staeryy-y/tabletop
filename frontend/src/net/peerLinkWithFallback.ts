@@ -66,7 +66,33 @@ export class PeerLinkWithFallback implements PeerLink {
     this.active = link;
     const queued = this.queuedBeforeSettled;
     this.queuedBeforeSettled = null;
-    for (const message of queued) link.send(message);
+    for (let i = 0; i < queued.length; i++) {
+      const message = queued[i];
+      try {
+        link.send(message);
+      } catch (err) {
+        // RTCDataChannel can reject an otherwise-open channel when a message exceeds
+        // negotiated max-message-size (large table snapshots are the common case).
+        // Switch transports immediately and resend instead of losing synchronization.
+        console.warn("[rpg-tabletop][sync] WebRTC send failed; switching to relay", err);
+        this.activateRelay();
+        for (const remaining of queued.slice(i)) this.active.send(remaining);
+        break;
+      }
+    }
+  }
+
+  private activateRelay(firstMessage?: unknown): void {
+    if (this.closed || this.active instanceof RelayPeerLink) {
+      if (firstMessage !== undefined) this.active.send(firstMessage);
+      return;
+    }
+    this.active.close();
+    const relay = this.makeRelay(this.signaling, this.remotePeerId);
+    relay.onMessage((message) => this.deliver(message));
+    this.active = relay;
+    this.queuedBeforeSettled = null;
+    if (firstMessage !== undefined) relay.send(firstMessage);
   }
 
   private deliver(message: unknown): void {
@@ -75,7 +101,14 @@ export class PeerLinkWithFallback implements PeerLink {
 
   send(message: unknown): void {
     if (this.queuedBeforeSettled !== null) this.queuedBeforeSettled.push(message);
-    else this.active.send(message);
+    else {
+      try {
+        this.active.send(message);
+      } catch (err) {
+        console.warn("[rpg-tabletop][sync] WebRTC send failed; switching to relay", err);
+        this.activateRelay(message);
+      }
+    }
   }
 
   onMessage(handler: (message: unknown) => void): () => void {
