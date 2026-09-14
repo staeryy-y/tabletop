@@ -117,6 +117,16 @@ describe("HostTableSync — spawn-stack", () => {
 });
 
 describe("HostTableSync — pick-up-and-drop", () => {
+  it("treats a drop back on the source pile as a no-op", () => {
+    const model = new TableModel();
+    const pile = model.spawnStack([DEF_A, DEF_B, DEF_A], 50, 50);
+    if (!pile) throw new Error("expected pile");
+    const broadcasts: unknown[] = [];
+    const sync = new HostTableSync(model, (_peer, event) => broadcasts.push(event), () => ["host"]);
+    sync.handleRequest("host", { type: "pick-up-and-drop", pileId: pile.id, x: 50, y: 50, mergeRadius: 72 });
+    expect(model.getPile(pile.id)?.cards).toHaveLength(3);
+    expect(broadcasts).toEqual([]);
+  });
   it("placing (no merge) emits an upsert for the same pile id at the new position", () => {
     const { model, sync, sent } = makeHost(["host"]);
     const pile = model.spawnCard(DEF_A, 0, 0);

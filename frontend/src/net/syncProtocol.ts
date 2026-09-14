@@ -200,7 +200,15 @@ export class HostTableSync {
         const previous = this.lastPickUpAt.get(dedupeKey) ?? -Infinity;
         if (now - previous < 150) return;
         this.lastPickUpAt.set(dedupeKey, now);
-        const before = this.model.getPile(req.pileId)?.cards.length ?? 0;
+        const sourceBefore = this.model.getPile(req.pileId);
+        const before = sourceBefore?.cards.length ?? 0;
+        // Dropping back onto the source stack is a no-op. Without this guard a
+        // duplicate pointer-up can split the top card and immediately merge it back,
+        // then repeat fast enough to drain an entire deck before the next render.
+        if (sourceBefore && Math.hypot(sourceBefore.x - req.x, sourceBefore.y - req.y) <= req.mergeRadius) {
+          console.info("[rpg-tabletop][sync] ignored same-pile drop", { fromPeerId, pileId: req.pileId, cards: before });
+          return;
+        }
         const floating = this.model.pickUpTop(req.pileId);
         if (!floating) return; // the pile was already gone (a race with another request) — nothing to do
         const result = this.model.dropPile(floating, req.x, req.y, req.mergeRadius);
