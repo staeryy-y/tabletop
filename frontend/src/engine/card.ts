@@ -5,8 +5,8 @@
 // not authored here.
 import { Container, Graphics, Sprite, Texture, Text } from "pixi.js";
 
-export const CARD_WIDTH = 90;
-export const CARD_HEIGHT = 126;
+export const CARD_WIDTH = 120;
+export const CARD_HEIGHT = 168;
 
 export interface CardFace {
   title: string;
@@ -100,6 +100,16 @@ function loadImageTexture(dataUri: string, onReady: (texture: Texture) => void):
   img.src = dataUri;
 }
 
+function fittedText(text: string, maxFontSize: number, maxWidth: number, maxHeight: number, fill: number, bold = false): Text {
+  let fontSize = maxFontSize;
+  const result = new Text({ text, style: { fontFamily: "monospace", fontSize, fontWeight: bold ? "bold" : "normal", fill, wordWrap: true, wordWrapWidth: maxWidth, align: "center" } });
+  while (fontSize > 6 && (result.width > maxWidth || result.height > maxHeight)) {
+    fontSize -= 1;
+    result.style.fontSize = fontSize;
+  }
+  return result;
+}
+
 function drawColorFace(container: Container, face: CardFace): void {
   const g = new Graphics();
   g.roundRect(-CARD_WIDTH / 2, -CARD_HEIGHT / 2, CARD_WIDTH, CARD_HEIGHT, 8);
@@ -107,19 +117,13 @@ function drawColorFace(container: Container, face: CardFace): void {
   g.stroke({ width: 2, color: 0x1a1a1a });
   container.addChild(g);
 
-  const title = new Text({
-    text: face.title,
-    style: { fontFamily: "monospace", fontSize: 13, fill: 0x1a1a1a, wordWrap: true, wordWrapWidth: CARD_WIDTH - 12, align: "center" },
-  });
+  const title = fittedText(face.title, 17, CARD_WIDTH - 16, 30, 0x1a1a1a);
   title.anchor.set(0.5, 0);
   title.position.set(0, -CARD_HEIGHT / 2 + 10);
   container.addChild(title);
 
   if (face.text) {
-    const body = new Text({
-      text: face.text,
-      style: { fontFamily: "monospace", fontSize: 9, fill: 0x1a1a1a, wordWrap: true, wordWrapWidth: CARD_WIDTH - 14, align: "center" },
-    });
+    const body = fittedText(face.text, 12, CARD_WIDTH - 18, 65, 0x1a1a1a);
     body.anchor.set(0.5, 0);
     body.position.set(0, -6);
     container.addChild(body);
@@ -130,8 +134,8 @@ function drawColorFace(container: Container, face: CardFace): void {
  * readable on translucent gray bands. Art preserves its aspect ratio; authors can opt
  * into a cropped `cover` fit when filling the window matters more than its edges. */
 function drawImageFace(container: Container, texture: Texture, face: CardFace): void {
-  const artTop = -CARD_HEIGHT / 2 + 22;
-  const artHeight = 64;
+  const artTop = -CARD_HEIGHT / 2 + 29;
+  const artHeight = 86;
   const sprite = new Sprite(texture);
   sprite.anchor.set(0.5);
   const scale = face.imageFit === "cover"
@@ -158,12 +162,12 @@ function drawImageFace(container: Container, texture: Texture, face: CardFace): 
   chrome.rect(-CARD_WIDTH / 2 + 2, artTop + artHeight + 2, CARD_WIDTH - 4, CARD_HEIGHT / 2 - artHeight + 1);
   chrome.fill({ color: 0x777777, alpha: 0.2 });
   container.addChild(chrome);
-  const title = new Text({ text: face.title, style: { fontFamily: "monospace", fontSize: 11, fontWeight: "bold", fill: 0xffffff, wordWrap: true, wordWrapWidth: CARD_WIDTH - 10, align: "center" } });
+  const title = fittedText(face.title, 15, CARD_WIDTH - 14, 26, 0xffffff, true);
   title.anchor.set(0.5, 0);
   title.position.set(0, -CARD_HEIGHT / 2 + 5);
   container.addChild(title);
   if (face.text) {
-    const body = new Text({ text: face.text, style: { fontFamily: "monospace", fontSize: 8, fill: 0xffffff, wordWrap: true, wordWrapWidth: CARD_WIDTH - 10, align: "center" } });
+    const body = fittedText(face.text, 11, CARD_WIDTH - 14, 42, 0xffffff);
     body.anchor.set(0.5, 0);
     body.position.set(0, artTop + artHeight + 6);
     container.addChild(body);
