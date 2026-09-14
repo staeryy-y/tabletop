@@ -223,6 +223,8 @@ def test_set_presence_updates_color_and_broadcasts_to_everyone_including_the_sen
         "isGM": False,
         "color": "#123abc",
         "eyesClosed": False,
+        "tokenX": None,
+        "tokenY": None,
     }
     assert sender.ws.sent == [expected]
     assert bystander.ws.sent == [expected]
@@ -270,8 +272,24 @@ def test_set_presence_with_neither_field_still_broadcasts_current_presence():
 
     assert sender.ws.sent == [
         {"type": "presence-changed", "peerId": "sender", "name": "sender", "isGM": True,
-         "color": sender.color, "eyesClosed": False}
+         "color": sender.color, "eyesClosed": False, "tokenX": None, "tokenY": None}
     ]
+
+
+def test_player_can_move_only_own_token_but_gm_can_move_any_token():
+    state = RoomState()
+    player = make_peer("player")
+    gm = make_peer("gm", is_gm=True)
+    state.peers = {"player": player, "gm": gm}
+
+    asyncio.run(signaling._handle_message(state, player, {"type": "set-player-token", "peerId": "player", "x": 12, "y": -4}))
+    assert (player.token_x, player.token_y) == (12.0, -4.0)
+
+    asyncio.run(signaling._handle_message(state, player, {"type": "set-player-token", "peerId": "gm", "x": 1, "y": 2}))
+    assert (gm.token_x, gm.token_y) == (None, None)
+
+    asyncio.run(signaling._handle_message(state, gm, {"type": "set-player-token", "peerId": "player", "x": 1, "y": 2}))
+    assert (player.token_x, player.token_y) == (1.0, 2.0)
 
 
 # --- _handle_disconnect ---

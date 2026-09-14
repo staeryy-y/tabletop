@@ -16,6 +16,7 @@ export function AdminDashboard({ me, onLoggedOut }: { me: Me; onLoggedOut: () =>
   const [roomName, setRoomName] = useState("");
   const [roomPassword, setRoomPassword] = useState("");
   const [roomPackage, setRoomPackage] = useState("bundled:generic-freeform");
+  const [createRoomOpen, setCreateRoomOpen] = useState(false);
 
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -44,6 +45,7 @@ export function AdminDashboard({ me, onLoggedOut }: { me: Me; onLoggedOut: () =>
       if (isCustom) rememberRoomPackageId(slug, roomPackage.slice("custom:".length));
       setRoomName("");
       setRoomPassword("");
+      setCreateRoomOpen(false);
       await refresh();
       location.hash = `#/room/${slug}`;
     } catch (err) {
@@ -115,30 +117,40 @@ export function AdminDashboard({ me, onLoggedOut }: { me: Me; onLoggedOut: () =>
           ))}
           {roomList.length === 0 && <li class="hint">{T.noRoomsHint}</li>}
         </ul>
-        <form onSubmit={createRoom}>
-          <input
-            placeholder={T.roomNamePlaceholder}
-            value={roomName}
-            onInput={(e) => setRoomName((e.target as HTMLInputElement).value)}
-            required
-          />
-          <input
-            placeholder={T.passwordOptionalPlaceholder}
-            value={roomPassword}
-            onInput={(e) => setRoomPassword((e.target as HTMLInputElement).value)}
-          />
-          <select value={roomPackage} onChange={(e) => setRoomPackage((e.target as HTMLSelectElement).value)}>
-            <option value="bundled:generic-freeform">{T.genericFreeformOption}</option>
-            <option value="bundled:dnd5e-srd">{T.dnd5eOption}</option>
-            {customPackages.map((p) => (
-              <option value={`custom:${p.id}`} key={p.id}>
-                {T.yourPackageOption(p.pkg.name)}
-              </option>
-            ))}
-          </select>
-          <button type="submit">{T.createRoom}</button>
-        </form>
+        <button onClick={() => setCreateRoomOpen(true)}>{T.createRoom}</button>
       </section>
+
+      {createRoomOpen && (
+        <div class="modal-overlay" onClick={() => setCreateRoomOpen(false)}>
+          <form class="modal" onSubmit={createRoom} onClick={(e) => e.stopPropagation()}>
+            <h2>{T.createRoomTitle}</h2>
+            <label>
+              {T.roomNamePlaceholder}
+              <input value={roomName} onInput={(e) => setRoomName((e.target as HTMLInputElement).value)} required autofocus />
+            </label>
+            <label>
+              {T.passwordOptionalPlaceholder}
+              <input value={roomPassword} onInput={(e) => setRoomPassword((e.target as HTMLInputElement).value)} />
+            </label>
+            <label>
+              {T.gamePackagesNavLink}
+              <select value={roomPackage} onChange={(e) => setRoomPackage((e.target as HTMLSelectElement).value)}>
+                <option value="bundled:generic-freeform">{T.genericFreeformOption}</option>
+                <option value="bundled:dnd5e-srd">{T.dnd5eOption}</option>
+                {customPackages.map((p) => (
+                  <option value={`custom:${p.id}`} key={p.id}>
+                    {T.yourPackageOption(p.pkg.name)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div class="modal-actions">
+              <button type="button" onClick={() => setCreateRoomOpen(false)}>{T.cancel}</button>
+              <button type="submit">{T.createRoom}</button>
+            </div>
+          </form>
+        </div>
+      )}
 
       <section class="dashboard-section">
         <h2>{T.usersHeading}</h2>

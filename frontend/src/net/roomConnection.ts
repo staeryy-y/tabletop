@@ -118,6 +118,15 @@ export class RoomConnection {
       this.view.applyEvent(msg as TableEvent);
     });
     link.send(REQUEST_SNAPSHOT);
+    // A request sent while the transport is negotiating is buffered by the normal
+    // wrapper, but retrying is cheap and protects older/fallback transports that may
+    // settle between the initial send and their message handler being ready. This is
+    // especially important for guests joining an already-populated table.
+    for (const delay of [500, 2000, 5000]) {
+      setTimeout(() => {
+        if (this.linkToHost === link) link.send(REQUEST_SNAPSHOT);
+      }, delay);
+    }
     return { sendRequest: (req) => link.send(req) };
   }
 

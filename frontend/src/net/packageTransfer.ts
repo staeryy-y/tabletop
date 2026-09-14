@@ -70,6 +70,7 @@ export class PackageReassembler {
   handleMessage(message: PackageTransferMessage): string | null {
     switch (message.type) {
       case "pkg:begin":
+        if (!Number.isInteger(message.totalChunks) || message.totalChunks < 1 || message.totalChunks > 100000) return null;
         // .fill(undefined) matters: a bare `new Array(n)` is sparse (n "holes", not n
         // real `undefined` values), and Array.prototype.some() below silently *skips*
         // holes rather than visiting them — so a genuinely missing chunk would go
@@ -80,6 +81,7 @@ export class PackageReassembler {
       case "pkg:chunk": {
         const entry = this.inFlight.get(message.transferId);
         if (!entry) return null; // a chunk for a transfer we never saw pkg:begin for — ignore, not crash
+        if (!Number.isInteger(message.index) || message.index < 0 || message.index >= entry.totalChunks || typeof message.data !== "string") return null;
         entry.parts[message.index] = message.data;
         return null;
       }
@@ -145,7 +147,15 @@ export class PackageDistributor {
    * client already has content — most commonly because it's the one that picked the
    * package in the first place, so there's nothing to ask for. */
   requestFromHostIfNeeded(): void {
-    if (this.localPackageJson === null) this.transport.sendToHost({ type: "pkg:request" });
+    if (this.localPackageJson !== null) return;
+    this.transport.sendToHost({ type: "pkg:request" });
+    // Retry briefly across transport negotiation/fallback. The request is idempotent;
+    // once any transfer completes, later retries become no-ops.
+    for (const delay of [500, 2000, 5000]) {
+      setTimeout(() => {
+        if (this.localPackageJson === null) this.transport.sendToHost({ type: "pkg:request" });
+      }, delay);
+    }
   }
 
   private sendPackageTo(peerId: string): void {

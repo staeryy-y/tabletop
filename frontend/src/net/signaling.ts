@@ -20,6 +20,8 @@ export interface Peer {
   isGM: boolean;
   color: string;
   eyesClosed: boolean;
+  tokenX: number | null;
+  tokenY: number | null;
 }
 
 export type SignalingEvent =
@@ -75,6 +77,10 @@ export class SignalingConnection {
    * handler — so callers should update their UI from that event, not optimistically. */
   setPresence(update: { color?: string; eyesClosed?: boolean }): void {
     this.send({ type: "set-presence", ...update });
+  }
+
+  setPlayerToken(peerId: string, x: number, y: number): void {
+    this.send({ type: "set-player-token", peerId, x, y });
   }
 
   close(): void {

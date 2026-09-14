@@ -10,6 +10,7 @@ import {
   PieceEntry,
   PieceSet,
   TrackDef,
+  normalizePackage,
   validatePackage,
 } from "../packages/gamePackage";
 import { readImageAsDataUrl } from "../packages/imageUpload";
@@ -51,7 +52,7 @@ export function GamePackageEditor({
   onSave: (pkg: GamePackage) => void;
   onCancel: () => void;
 }) {
-  const [pkg, setPkg] = useState<GamePackage>(initial);
+  const [pkg, setPkg] = useState<GamePackage>(() => normalizePackage(initial));
   const [activeTab, setActiveTab] = useState<TabKey>("cards");
   const errors = validatePackage(pkg);
 
@@ -473,9 +474,13 @@ function CardEntriesEditor({ entries, onChange }: { entries: CardEntry[]; onChan
   const t = T.cardEntries;
   const [busy, setBusy] = useState<string | null>(null);
   const [showNewCard, setShowNewCard] = useState(false);
+  const [editingCard, setEditingCard] = useState<number | null>(null);
 
   function update(i: number, patch: Partial<CardEntry["front"]>) {
     onChange(entries.map((e, idx) => (idx === i ? { ...e, front: { ...e.front, ...patch } } : e)));
+  }
+  function updateCount(i: number, count: number) {
+    onChange(entries.map((entry, idx) => (idx === i ? { ...entry, count } : entry)));
   }
   function remove(i: number) {
     onChange(entries.filter((_, idx) => idx !== i));
@@ -498,31 +503,25 @@ function CardEntriesEditor({ entries, onChange }: { entries: CardEntry[]; onChan
         {entries.map((entry, i) => (
           <div class="entry-tile" key={entry.id}>
             {entry.front.image ? (
-              <img class="entry-tile-preview" src={entry.front.image} alt={t.imageAltText} />
+              <div class="card-preview">
+                <div class="card-preview-title">{entry.front.title}</div>
+                <img class={"card-preview-art " + (entry.front.imageFit ?? "contain")} src={entry.front.image} alt={t.imageAltText} />
+                {entry.front.text && <div class="card-preview-text">{entry.front.text}</div>}
+              </div>
             ) : (
-              <div class="entry-tile-preview entry-tile-preview-empty" style={{ background: colorToCss(entry.front.color) }}>
-                {!entry.front.title && t.emptyPreviewPlaceholder}
+              <div class="card-preview" style={{ background: colorToCss(entry.front.color) }}>
+                <div class="card-preview-title">{entry.front.title || t.emptyPreviewPlaceholder}</div>
+                {entry.front.text && <div class="card-preview-text">{entry.front.text}</div>}
               </div>
             )}
-            <input
-              value={entry.front.title}
-              placeholder={t.titlePlaceholder}
-              onInput={(e) => update(i, { title: (e.target as HTMLInputElement).value })}
-            />
-            <input
-              value={entry.front.text ?? ""}
-              placeholder={t.bodyTextPlaceholder}
-              onInput={(e) => update(i, { text: (e.target as HTMLInputElement).value })}
-            />
-            <input type="file" accept="image/*" onChange={(e) => uploadImage(i, (e.target as HTMLInputElement).files?.[0])} />
-            {busy === entry.id && <span class="hint">{t.readingHint}</span>}
+            <button class="card-preview-button" onClick={() => setEditingCard(i)}>{t.editCardButton}</button>
             <div class="entry-tile-actions">
-              {entry.front.image && <button onClick={() => update(i, { image: undefined })}>{t.clearImage}</button>}
               <button onClick={() => remove(i)}>{t.remove}</button>
             </div>
           </div>
         ))}
       </div>
+      {editingCard !== null && <EditCardModal entry={entries[editingCard]} onSave={(updated) => { onChange(entries.map((e, idx) => idx === editingCard ? updated : e)); setEditingCard(null); }} onCancel={() => setEditingCard(null)} />}
       <button onClick={() => setShowNewCard(true)}>{t.addCard}</button>
       {showNewCard && (
         <NewCardModal
@@ -535,6 +534,24 @@ function CardEntriesEditor({ entries, onChange }: { entries: CardEntry[]; onChan
       )}
     </div>
   );
+}
+
+function EditCardModal({ entry, onSave, onCancel }: { entry: CardEntry; onSave: (entry: CardEntry) => void; onCancel: () => void }) {
+  const t = T.cardEntries;
+  const [draft, setDraft] = useState(entry);
+  async function upload(file: File | undefined) {
+    if (!file) return;
+    const image = await readImageAsDataUrl(file);
+    setDraft((d) => ({ ...d, front: { ...d.front, image } }));
+  }
+  return <Modal title={t.editCardTitle} onClose={onCancel}>
+    <label>{t.modalTitleLabel}<input value={draft.front.title} onInput={(e) => setDraft({ ...draft, front: { ...draft.front, title: (e.target as HTMLInputElement).value } })} autofocus /></label>
+    <label>{t.modalTextLabel}<textarea value={draft.front.text ?? ""} onInput={(e) => setDraft({ ...draft, front: { ...draft.front, text: (e.target as HTMLTextAreaElement).value || undefined } })} /></label>
+    <label>{t.modalImageLabel}<input type="file" accept="image/*" onChange={(e) => upload((e.target as HTMLInputElement).files?.[0])} /></label>
+    <label>{t.imageFitLabel}<select value={draft.front.imageFit ?? "contain"} onChange={(e) => setDraft({ ...draft, front: { ...draft.front, imageFit: (e.target as HTMLSelectElement).value as "contain" | "cover" } })}><option value="contain">{t.fitContain}</option><option value="cover">{t.fitCover}</option></select></label>
+    <label>{t.copyCountLabel}<input type="number" min="1" step="1" value={draft.count ?? 1} onInput={(e) => setDraft({ ...draft, count: Number((e.target as HTMLInputElement).value) })} /></label>
+    <div class="modal-actions"><button onClick={onCancel}>{T.cancel}</button><button onClick={() => onSave(draft)}>{t.saveCard}</button></div>
+  </Modal>;
 }
 
 function PieceSetsEditor({ pieceSets, onChange }: { pieceSets: PieceSet[]; onChange: (p: PieceSet[]) => void }) {
@@ -738,6 +755,10 @@ function NewMatModal({ onCreate, onCancel }: { onCreate: (entry: MatEntry) => vo
   const t = T.matEntries;
   const [symbol, setSymbol] = useState(t.newMatDefaultSymbol);
   const [image, setImage] = useState<string | undefined>(undefined);
+  const [text, setText] = useState("");
+  const [background, setBackground] = useState("#3d4a3d");
+  const [width, setWidth] = useState(220);
+  const [height, setHeight] = useState(160);
   const [locked, setLocked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -757,7 +778,16 @@ function NewMatModal({ onCreate, onCancel }: { onCreate: (entry: MatEntry) => vo
   }
 
   function create() {
-    onCreate({ id: freshId("mat"), symbol: image ? undefined : symbol || t.newMatDefaultSymbol, image, locked: locked || undefined });
+    onCreate({
+      id: freshId("mat"),
+      symbol: image || text ? undefined : symbol || t.newMatDefaultSymbol,
+      image,
+      text: text.trim() || undefined,
+      background: Number.parseInt(background.slice(1), 16),
+      width: Math.max(80, width),
+      height: Math.max(60, height),
+      locked: locked || undefined,
+    });
   }
 
   return (
@@ -779,6 +809,24 @@ function NewMatModal({ onCreate, onCancel }: { onCreate: (entry: MatEntry) => vo
         {t.modalImageLabel}
         <input type="file" accept="image/*" onChange={(e) => uploadImage((e.target as HTMLInputElement).files?.[0])} />
       </label>
+      <label>
+        {t.textPlaceholder}
+        <textarea value={text} onInput={(e) => setText((e.target as HTMLTextAreaElement).value)} />
+      </label>
+      <div class="editor-row">
+        <label>
+          {t.widthLabel}
+          <input type="number" min="80" value={width} onInput={(e) => setWidth(Number((e.target as HTMLInputElement).value) || 220)} />
+        </label>
+        <label>
+          {t.heightLabel}
+          <input type="number" min="60" value={height} onInput={(e) => setHeight(Number((e.target as HTMLInputElement).value) || 160)} />
+        </label>
+        <label>
+          {t.backgroundLabel}
+          <input type="color" value={background} onInput={(e) => setBackground((e.target as HTMLInputElement).value)} />
+        </label>
+      </div>
       <label class="checkbox">
         <input type="checkbox" checked={locked} onChange={(e) => setLocked((e.target as HTMLInputElement).checked)} />
         {t.startsLockedLabel}
@@ -833,6 +881,12 @@ function MatEntriesEditor({ entries, onChange }: { entries: MatEntry[]; onChange
               onInput={(e) => update(i, { symbol: (e.target as HTMLInputElement).value || undefined, image: (e.target as HTMLInputElement).value ? undefined : entry.image })}
             />
             <input type="file" accept="image/*" onChange={(e) => uploadImage(i, (e.target as HTMLInputElement).files?.[0])} />
+            <textarea value={entry.text ?? ""} placeholder={t.textPlaceholder} onInput={(e) => update(i, { text: (e.target as HTMLTextAreaElement).value || undefined })} />
+            <div class="editor-row">
+              <input type="number" min="80" value={entry.width ?? 220} aria-label={t.widthLabel} onInput={(e) => update(i, { width: Number((e.target as HTMLInputElement).value) || undefined })} />
+              <input type="number" min="60" value={entry.height ?? 160} aria-label={t.heightLabel} onInput={(e) => update(i, { height: Number((e.target as HTMLInputElement).value) || undefined })} />
+              <input type="color" value={colorToCss(entry.background) ?? "#3d4a3d"} aria-label={t.backgroundLabel} onInput={(e) => update(i, { background: Number.parseInt((e.target as HTMLInputElement).value.slice(1), 16) })} />
+            </div>
             <label class="checkbox">
               <input type="checkbox" checked={entry.locked ?? false} onChange={(e) => update(i, { locked: (e.target as HTMLInputElement).checked || undefined })} />
               {t.startsLockedLabel}

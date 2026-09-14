@@ -9,7 +9,7 @@ import { PackageDistributor } from "../net/packageTransfer";
 import { RoomConnection } from "../net/roomConnection";
 import { Peer, SignalingConnection } from "../net/signaling";
 import { TableStore } from "../net/tableStore";
-import { createEmptyPackage, GamePackage } from "../packages/gamePackage";
+import { createEmptyPackage, GamePackage, normalizePackage } from "../packages/gamePackage";
 import { fetchBundledPackage } from "../packages/gameDefinitionLoader";
 import { PackageStore } from "../packages/packageStore";
 import {
@@ -65,11 +65,13 @@ function cardSetSpawnsFromPackage(pkg: GamePackage): CardSetSpawn[] {
       label: set.label ?? set.key,
       startX: set.startX ?? fallback.x,
       startY: set.startY ?? fallback.y,
-      defs: set.entries.map((entry) => ({
-        id: `${set.key}:${entry.id}`,
-        front: { title: entry.front.title, text: entry.front.text, color: entry.front.color ?? FALLBACK_CARD_COLOR, image: entry.front.image },
-        back: { title: set.back?.title ?? "", color: set.back?.color ?? 0x333333, image: set.back?.image },
-      })),
+      defs: set.entries.flatMap((entry) =>
+        Array.from({ length: entry.count ?? 1 }, (_, copy) => ({
+          id: `${set.key}:${entry.id}:${copy}`,
+          front: { title: entry.front.title, text: entry.front.text, color: entry.front.color ?? FALLBACK_CARD_COLOR, image: entry.front.image, imageFit: entry.front.imageFit },
+          back: { title: set.back?.title ?? "", color: set.back?.color ?? 0x333333, image: set.back?.image, imageFit: set.back?.imageFit },
+        })),
+      ),
     };
   });
 }
@@ -116,7 +118,7 @@ function matSetSpawnsFromPackage(pkg: GamePackage): MatSpawn[] {
     set.entries.forEach((entry, j) => {
       const offset = matEntryOffset(j);
       spawns.push({
-        def: { id: `${set.key}:${entry.id}`, image: entry.image, symbol: entry.symbol },
+        def: { id: `${set.key}:${entry.id}`, image: entry.image, symbol: entry.symbol, text: entry.text, background: entry.background, width: entry.width, height: entry.height },
         x: anchorX + offset.x,
         y: anchorY + offset.y,
         locked: entry.locked ?? false,
@@ -161,6 +163,7 @@ export function RoomTable({ slug }: { slug: string }) {
   const [chatOpen, setChatOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [colorMenuOpen, setColorMenuOpen] = useState(false);
+  const [colorPromptOpen, setColorPromptOpen] = useState(false);
 
   useEffect(() => {
     const token = loadRoomToken(slug);
@@ -177,6 +180,7 @@ export function RoomTable({ slug }: { slug: string }) {
     // no matter how the WS's first few messages race against PixiJS's own init().
     const table = new TableApp();
     tableRef.current = table;
+    table.setPlayerTokenMoveHandler((peerId, x, y) => connRef.current?.setPlayerToken(peerId, x, y));
     (async () => {
       if (canvasHost.current) await table.init(canvasHost.current);
     })();
@@ -262,6 +266,7 @@ export function RoomTable({ slug }: { slug: string }) {
         setRoomName(event.roomInfo.name);
         table.setSelfPeerId(event.peerId);
         table.setSelfIsGm(event.gmPeerId === event.peerId);
+        setColorPromptOpen(true);
         for (const p of event.peers) otherPeerIdsRef.current.add(p.peerId);
         setPeers((prev) => {
           const next = new Map(prev);
@@ -292,9 +297,10 @@ export function RoomTable({ slug }: { slug: string }) {
         gameDefRefRef.current = gameDefRef;
         const distributor = new PackageDistributor(roomConn, (received) => {
           if (disposed) return;
-          setPkg(received);
-          loadedPkgRef.current = received;
-          seedStarterContentIfHost(received);
+          const normalized = normalizePackage(received);
+          setPkg(normalized);
+          loadedPkgRef.current = normalized;
+          seedStarterContentIfHost(normalized);
         });
         packageDistributorRef.current = distributor;
 
@@ -317,9 +323,10 @@ export function RoomTable({ slug }: { slug: string }) {
             try {
               const loaded = await fetchBundledPackage(gameDefRef.slice("bundled:".length));
               if (disposed) return;
-              setPkg(loaded);
-              loadedPkgRef.current = loaded;
-              seedStarterContentIfHost(loaded);
+              const normalized = normalizePackage(loaded);
+              setPkg(normalized);
+              loadedPkgRef.current = normalized;
+              seedStarterContentIfHost(normalized);
             } catch (err) {
               console.error("failed to load game package", err);
             }
@@ -335,18 +342,11 @@ export function RoomTable({ slug }: { slug: string }) {
           const customPkg = customId ? (await packageStore.get(customId))?.pkg : undefined;
           if (disposed) return;
           if (customPkg) {
-            distributor.setLocalPackage(customPkg);
-            setPkg(customPkg);
-            loadedPkgRef.current = customPkg;
-            seedStarterContentIfHost(customPkg);
-          } else if (loadedPkgRef.current === null) {
-            // Show an honest placeholder rather than a blank table while the transfer
-            // is in flight — distributor's onReceived callback above replaces it the
-            // moment real content arrives. Guarded on loadedPkgRef so this can't
-            // clobber a package that already arrived over the wire before this
-            // (IndexedDB-bound) check even finished.
-            const placeholder = createEmptyPackage(T.placeholderPackageName);
-            setPkg(placeholder);
+            const normalized = normalizePackage(customPkg);
+            distributor.setLocalPackage(normalized);
+            setPkg(normalized);
+            loadedPkgRef.current = normalized;
+            seedStarterContentIfHost(normalized);
           }
         })();
       } else if (event.type === "peer-joined") {
@@ -389,7 +389,7 @@ export function RoomTable({ slug }: { slug: string }) {
           const localSnapshot = await tableStore.load(slug);
           if (disposed || !roomConnRef.current) return;
           const snapshot = localSnapshot ?? serverSnapshot;
-          if (snapshot !== null && (snapshot.piles.length > 0 || snapshot.pieces.length > 0)) {
+          if (snapshot !== null && (snapshot.piles.length > 0 || snapshot.pieces.length > 0 || snapshot.mats.length > 0)) {
             // Resuming real content (from local storage, or a genuine peer migration
             // that already had state) — never inject starter content on top of it.
             // seedStarterContentIfHost's own flag only ever protects against seeding
@@ -423,7 +423,7 @@ export function RoomTable({ slug }: { slug: string }) {
 
   // Keep the table's default player tokens (engine/seating.ts) in sync with presence.
   useEffect(() => {
-    tableRef.current?.setPlayers([...peers.values()].map((p) => ({ peerId: p.peerId, name: p.name, color: p.color, eyesClosed: p.eyesClosed })));
+    tableRef.current?.setPlayers([...peers.values()].map((p) => ({ peerId: p.peerId, name: p.name, color: p.color, eyesClosed: p.eyesClosed, tokenX: p.tokenX, tokenY: p.tokenY })));
   }, [peers]);
 
   const me = selfId ? peers.get(selfId) : undefined;
@@ -447,6 +447,7 @@ export function RoomTable({ slug }: { slug: string }) {
 
   function pickColor(color: string) {
     connRef.current?.setPresence({ color });
+    setColorPromptOpen(false);
   }
 
   function postChatMessage(message: ChatMessage) {
@@ -471,6 +472,13 @@ export function RoomTable({ slug }: { slug: string }) {
   return (
     <div class="room-page">
       <div class="table-canvas" ref={canvasHost} />
+
+      {(!selfId || !pkg) && (
+        <div class="room-loading" role="status">
+          <h2>{T.loadingTitle}</h2>
+          <p>{T.loadingText}</p>
+        </div>
+      )}
 
       {/* Floating HUD, not a sidebar — see docs/IMPLEMENTATION_LOG.md's earlier note on
           why this replaced the old webapp-style layout. */}
@@ -586,6 +594,29 @@ export function RoomTable({ slug }: { slug: string }) {
                 aria-label={T.colorSwatchAriaLabel(c)}
               />
             ))}
+          </div>
+        </div>
+      )}
+
+      {colorPromptOpen && (
+        <div class="modal-overlay" role="dialog" aria-modal="true" aria-label={T.colorPromptTitle}>
+          <div class="modal">
+            <h2>{T.colorPromptTitle}</h2>
+            <p>{T.colorPromptText}</p>
+            <div class="swatches">
+              {COLOR_SWATCHES.map((c) => (
+                <button
+                  key={c}
+                  class={"swatch" + (me?.color === c ? " selected" : "")}
+                  style={{ background: c }}
+                  onClick={() => pickColor(c)}
+                  aria-label={T.colorSwatchAriaLabel(c)}
+                />
+              ))}
+            </div>
+            <div class="modal-actions">
+              <button onClick={() => setColorPromptOpen(false)}>{T.colorPromptContinue}</button>
+            </div>
           </div>
         </div>
       )}

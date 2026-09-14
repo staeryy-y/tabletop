@@ -15,11 +15,15 @@ export interface CardFaceContent {
    * uploaded image as a data: URI — never both. */
   color?: number;
   image?: string;
+  /** Keep the whole image visible, or crop its edges to fill the card-art window. */
+  imageFit?: "contain" | "cover";
 }
 
 export interface CardEntry {
   id: string;
   front: CardFaceContent;
+  /** Number of copies of this card to put into its set's starting stack. */
+  count?: number;
 }
 
 export interface CardSet {
@@ -73,6 +77,11 @@ export interface MatEntry {
    * unlocked, same as if this field didn't exist — a package authored before Mats
    * existed at all obviously never sets it. */
   locked?: boolean;
+  /** A rule-sheet mat can be a colored/image-backed surface with arbitrary text. */
+  text?: string;
+  background?: number;
+  width?: number;
+  height?: number;
 }
 
 export interface MatSet {
@@ -117,6 +126,28 @@ export interface GamePackage {
 
 export function createEmptyPackage(name: string): GamePackage {
   return { name, tracks: [], dice: [], cardSets: [], pieceSets: [], matSets: [], macros: [] };
+}
+
+/** Fills in any of GamePackage's array fields that are missing entirely with an empty
+ * array — for a package that reaches the app from somewhere that isn't guaranteed to
+ * already have this shape: a package saved in browser localStorage (packages/packageStore.ts)
+ * *before* a given field existed at all (`matSets` didn't exist before D26 — every
+ * package saved before then genuinely has no `matSets` key, not just an empty one),
+ * or a hand-edited/older JSON file someone imports (ui/GamePackages.tsx). Without
+ * this, `validatePackage`'s `for (const set of pkg.matSets)` throws outright on such a
+ * package (iterating `undefined`) the moment it's opened for editing — this is what
+ * "editing packages does not work" actually was. Never overwrites a field that's
+ * already present, even an empty array; only fills in ones missing altogether. */
+export function normalizePackage(pkg: GamePackage): GamePackage {
+  return {
+    ...pkg,
+    tracks: pkg.tracks ?? [],
+    dice: pkg.dice ?? [],
+    cardSets: pkg.cardSets ?? [],
+    pieceSets: pkg.pieceSets ?? [],
+    matSets: pkg.matSets ?? [],
+    macros: pkg.macros ?? [],
+  };
 }
 
 const KEY_PATTERN = /^[a-z][a-z0-9_-]*$/;
@@ -166,6 +197,9 @@ export function validatePackage(pkg: GamePackage): string[] {
     for (const entry of set.entries) {
       if (!entry.front.title.trim() && !entry.front.image) {
         errors.push(`A card in set "${set.key}" (id "${entry.id}") needs at least a title or an image.`);
+      }
+      if (entry.count !== undefined && (!Number.isInteger(entry.count) || entry.count < 1)) {
+        errors.push(`Card in set "${set.key}" (id "${entry.id}") needs a whole-number copy count of at least 1.`);
       }
     }
   }

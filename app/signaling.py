@@ -43,6 +43,8 @@ class Peer:
     joined_at: float = field(default_factory=time.monotonic)
     color: str = field(default_factory=lambda: random.choice(DEFAULT_COLOR_PALETTE))
     eyes_closed: bool = False
+    token_x: Optional[float] = None
+    token_y: Optional[float] = None
 
 
 @dataclass
@@ -115,7 +117,7 @@ async def _broadcast(state: RoomState, message: dict, exclude: Optional[str] = N
 
 
 def _presence(peer: Peer) -> dict:
-    return {"peerId": peer.peer_id, "name": peer.name, "isGM": peer.is_gm, "color": peer.color, "eyesClosed": peer.eyes_closed}
+    return {"peerId": peer.peer_id, "name": peer.name, "isGM": peer.is_gm, "color": peer.color, "eyesClosed": peer.eyes_closed, "tokenX": peer.token_x, "tokenY": peer.token_y}
 
 
 @router.websocket("/ws/room/{slug}")
@@ -232,6 +234,18 @@ async def _handle_message(state: RoomState, sender: Peer, msg: dict) -> None:
         if isinstance(eyes_closed, bool):
             sender.eyes_closed = eyes_closed
         await _broadcast(state, {"type": "presence-changed", **_presence(sender)})
+        return
+
+    if msg_type == "set-player-token":
+        target = state.peers.get(msg.get("peerId"))
+        x, y = msg.get("x"), msg.get("y")
+        # A player controls their own marker; the attested GM may arrange any marker.
+        if target is None or (target.peer_id != sender.peer_id and not sender.is_gm):
+            return
+        if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+            return
+        target.token_x, target.token_y = float(x), float(y)
+        await _broadcast(state, {"type": "presence-changed", **_presence(target)})
         return
 
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CardSet, DiceDef, GamePackage, MatSet, PieceSet, TrackDef, createEmptyPackage, isValidPackage, validatePackage } from "./gamePackage";
+import { CardSet, DiceDef, GamePackage, MatSet, PieceSet, TrackDef, createEmptyPackage, isValidPackage, normalizePackage, validatePackage } from "./gamePackage";
 
 function pkg(overrides: Partial<GamePackage> = {}): GamePackage {
   return { ...createEmptyPackage("Test Package"), ...overrides };
@@ -148,6 +148,19 @@ describe("validatePackage — card sets", () => {
   it("flags duplicate card set keys", () => {
     const errors = validatePackage(pkg({ cardSets: [set(), set()] }));
     expect(errors).toContain('Duplicate card set key "event".');
+  });
+
+  it("accepts a positive whole-number card copy count and rejects other counts", () => {
+    expect(validatePackage(pkg({ cardSets: [set({ entries: [{ id: "e1", count: 3, front: { title: "Event" } }] })] }))).toEqual([]);
+    expect(validatePackage(pkg({ cardSets: [set({ entries: [{ id: "e1", count: 1.5, front: { title: "Event" } }] })] })).some((e) => e.includes("copy count"))).toBe(true);
+    expect(validatePackage(pkg({ cardSets: [set({ entries: [{ id: "e1", count: 0, front: { title: "Event" } }] })] })).some((e) => e.includes("copy count"))).toBe(true);
+  });
+});
+
+describe("normalizePackage", () => {
+  it("upgrades packages saved before optional content arrays existed", () => {
+    const old = { name: "Old package", cardSets: [] } as unknown as GamePackage;
+    expect(normalizePackage(old)).toMatchObject({ name: "Old package", tracks: [], dice: [], cardSets: [], pieceSets: [], matSets: [], macros: [] });
   });
 });
 

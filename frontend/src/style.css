@@ -149,6 +149,13 @@ button:disabled {
   gap: 20px;
 }
 
+/* Package authoring is a workstation, not a narrow dashboard form. Give its tabs and
+   visual entry cards room to breathe, particularly once a rule-sheet mat has text and
+   dimensions in addition to its image. */
+.dashboard:has(.editor) {
+  max-width: 1280px;
+}
+
 .dashboard header {
   display: flex;
   flex-wrap: wrap;
@@ -455,15 +462,15 @@ button.hud-icon-button.active {
    cards/pieces more clearly, and represent them visually rather than just as a list." */
 .entry-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
 }
 
 .entry-tile {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  padding: 6px;
+  gap: 8px;
+  padding: 12px;
   background: var(--bg);
   border: 2px solid var(--border);
   border-radius: var(--radius);
@@ -493,9 +500,50 @@ button.hud-icon-button.active {
   background: var(--bg);
 }
 
+/* Mirrors engine/card.ts's trading-card renderer for image cards in the editor. */
+.card-preview {
+  position: relative;
+  aspect-ratio: 5 / 7;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #30343a;
+}
+.card-preview-title, .card-preview-text {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  padding: 5px 7px;
+  color: white;
+  background: rgba(100, 100, 100, .2);
+  text-align: center;
+  font-size: .72rem;
+}
+.card-preview-title { top: 0; font-weight: bold; }
+.card-preview-text { bottom: 0; min-height: 28%; }
+.card-preview-art { width: 100%; height: 55%; margin-top: 20%; display: block; }
+.card-preview-art.contain { object-fit: contain; }
+.card-preview-art.cover { object-fit: cover; }
+.card-preview-button {
+  width: 100%;
+  padding: 4px;
+  font-size: .55rem;
+}
+
 .entry-tile input {
   font-size: 0.8rem;
   padding: 5px 6px;
+}
+
+.entry-tile textarea {
+  min-height: 88px;
+  resize: vertical;
+  background: var(--bg);
+  border: 2px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius);
+  padding: 7px;
+  font: 0.8rem var(--font-mono);
 }
 
 .entry-tile input[type="file"] {
@@ -683,6 +731,20 @@ button.hud-icon-button.active {
   justify-content: flex-end;
 }
 
+.card-reader-overlay {
+  position: fixed; inset: 0; z-index: 10001; display: grid; place-items: center;
+  padding: 20px; background: rgba(0,0,0,.72);
+}
+.card-reader {
+  width: min(460px, 92vw); max-height: 90vh; overflow: auto; padding: 18px;
+  background: #777; color: #fff; border: 3px solid #1a1a1a; border-radius: 8px;
+}
+.card-reader img { width: 100%; height: min(48vh, 390px); display: block; background: #30343a; }
+.card-reader img.contain { object-fit: contain; }
+.card-reader img.cover { object-fit: cover; }
+.card-reader h2, .card-reader p { background: rgba(55,55,55,.2); padding: 10px; margin: 0; }
+.card-reader p { white-space: pre-wrap; line-height: 1.45; }
+
 .table-canvas {
   width: 100%;
   height: 100%;
@@ -692,6 +754,13 @@ button.hud-icon-button.active {
 .table-canvas canvas {
   display: block;
 }
+
+.room-loading {
+  position: fixed; inset: 0; z-index: 900; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 10px; text-align: center;
+  background: var(--bg); padding: 24px;
+}
+.room-loading p { max-width: 380px; margin: 0; }
 
 /* Chat + roll + macros */
 .chat {

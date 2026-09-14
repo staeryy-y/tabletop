@@ -1,20 +1,10 @@
-// fake-indexeddb gives us a real (in-memory) IndexedDB implementation rather than a
-// hand-rolled mock, so this exercises the actual transaction/request code paths in
-// packageStore.ts, not a stand-in for them. Installed forcefully in vitest.setup.ts
-// (not the usual `fake-indexeddb/auto` self-registering import) because jsdom already
-// defines its own non-functional indexedDB stub that otherwise wins.
+// PackageStore uses the browser's localStorage, which jsdom provides for these tests.
 import { beforeEach, describe, expect, it } from "vitest";
 import { createEmptyPackage } from "./gamePackage";
 import { PackageStore, newPackageId } from "./packageStore";
 
-beforeEach(async () => {
-  // fresh database per test
-  await new Promise<void>((resolve, reject) => {
-    const req = indexedDB.deleteDatabase("rpg-tabletop-packages");
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
-    req.onblocked = () => resolve();
-  });
+beforeEach(() => {
+  localStorage.clear();
 });
 
 describe("newPackageId", () => {

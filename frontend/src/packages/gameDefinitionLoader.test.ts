@@ -103,13 +103,14 @@ cards:
     back: { title: "", color: 3355443 }
     entries:
       - id: e1
+        count: 3
         front: { title: "Creepy Puppet", text: "Something happens." }
 `);
     expect(pkg.cardSets).toEqual([
       {
         key: "event",
         back: { title: "", text: undefined, color: 3355443, image: undefined },
-        entries: [{ id: "e1", front: { title: "Creepy Puppet", text: "Something happens.", color: undefined, image: undefined } }],
+        entries: [{ id: "e1", count: 3, front: { title: "Creepy Puppet", text: "Something happens.", color: undefined, image: undefined } }],
       },
     ]);
   });

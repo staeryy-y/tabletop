@@ -78,6 +78,8 @@ export const UI_TEXT = {
     dnd5eOption: "D&D 5e (SRD)",
     yourPackageOption: (name: string) => `${name} (yours)`,
     createRoom: "Create room",
+    createRoomTitle: "Create room",
+    cancel: "Cancel",
     usersHeading: "Users",
     adminSuffix: "(admin)",
     usernamePlaceholder: "Username",
@@ -186,6 +188,13 @@ export const UI_TEXT = {
       modalTitlePlaceholder: "title (or blank for image-only)",
       modalTextLabel: "Body text (optional)",
       modalImageLabel: "Image (optional)",
+      copyCountLabel: "Copies",
+      imageFitLabel: "Image fit",
+      fitContain: "Show whole image",
+      fitCover: "Crop to fill art window",
+      editCardButton: "Edit card",
+      editCardTitle: "Edit card",
+      saveCard: "Save card",
       createButton: "Create card",
     },
 
@@ -229,6 +238,10 @@ export const UI_TEXT = {
       modalTitle: "New mat",
       modalSymbolLabel: "Symbol/emoji",
       modalImageLabel: "Image (optional, instead of a symbol)",
+      textPlaceholder: "Rule-sheet text (optional)",
+      widthLabel: "Width",
+      heightLabel: "Height",
+      backgroundLabel: "Background color",
       createButton: "Create mat",
     },
 
@@ -254,6 +267,8 @@ export const UI_TEXT = {
     gmSuffix: " • GM",
     eyesClosedSuffix: " • \u{1F648}",
     connectingHint: "Connecting…",
+    loadingTitle: "Preparing table…",
+    loadingText: "Receiving the game package and table state. The game will appear when it is ready.",
 
     // Each help line is split into a bolded lead phrase + the rest of the sentence, so
     // the panel can render the lead as <strong> without regex-splitting one combined
@@ -276,6 +291,9 @@ export const UI_TEXT = {
     openEyesTitle: "Open your eyes",
     closeEyesTitle: "Close your eyes (for reveal moments, e.g. Avalon/Mafia)",
     changeColorTitle: "Change your color",
+    colorPromptTitle: "Pick your color",
+    colorPromptText: "This is how your player token and cursor appear to everyone at the table.",
+    colorPromptContinue: "Keep this color",
     chatButton: "\u{1F4AC} Chat",
     howToPlayTitle: "How to play",
     howToPlayButton: "?",

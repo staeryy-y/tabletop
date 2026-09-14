@@ -32,10 +32,42 @@ it's actually fixed, with a one-line note on what changed.
   mid-stream: the GM is always host when connected, not merely preferred on migration.
 
 All of the above have backend (pytest) and/or frontend (Vitest) test coverage; see each
-module's own test file. 378 frontend + 105 backend tests passing as of the last commit
-that touched this log.
+module's own test file. 494 frontend tests passing as of the last commit that touched
+this log. The backend suite remains listed at 105 from its last verified run.
 
 ## Implemented, beyond the milestone checklist
+
+- Card clicks no longer enter the pickup/drop mutation path unless the pointer actually
+  moves. This prevents hidden-card reader popups from racing a drag and losing their
+  face; a click is now strictly read-only, while a real drag still splits/moves cards.
+
+- Guest catch-up is now retried briefly after link negotiation, ensuring a guest joining
+  an already-populated room receives the host's current snapshot even if the first
+  request crossed the WebRTC/relay transition at an unlucky time.
+
+- Card entry editing is now popup-based: the editor shows only rendered card previews
+  and a compact action, while clicking a preview opens the full card editor dialog.
+  Mat creation exposes the rule-sheet fields directly in its Add Mat dialog.
+
+- Card art now renders in a non-stretched trading-card layout with a fixed aspect-ratio
+  art window, translucent title/rules bands, and per-image contain/crop-to-fill choice.
+  Clicking a card opens a large readable card viewer; dragging does not accidentally
+  open it. Room entry shows an explicit loading screen until presence and package data
+  are ready.
+
+- Live player tokens now carry a presence-synced table position instead of each browser
+  treating a drag as local-only. A player may move their own token and the server-
+  attested GM may arrange anyone's; each token also renders the player’s full name
+  below its marker. Mats can now act as rule sheets: each entry supports a background
+  color or image, configurable dimensions, and wrapped text.
+
+- Feedback batch 2: older saved/imported packages are normalized before editing or
+  starting a room (so missing newer arrays such as `matSets` no longer make Edit Game
+  render blank); room creation now uses a settings modal; joining opens a color-choice
+  prompt; package starter content is normalized and seeded at its configured Layout
+  position; card/deck drags preserve the pointer's grab offset and show a detached card
+  while the source stack remains visible; and Card entries now have a validated
+  `count`/Copies field which expands into that many cards in the starting stack.
 
 - Live per-player presence: color (random default, user-changeable swatch picker),
   eyes-closed flag — both synced via `set-presence`/`presence-changed` over signaling,
@@ -49,7 +81,7 @@ that touched this log.
   only, not the rotate-handle gesture.
 - Game-package editor (`GamePackageEditor.tsx`): tracks, dice, card sets (text or
   uploaded-image faces), piece sets (emoji/symbol or uploaded-image faces), macros,
-  image upload with a 2MB cap, IndexedDB-backed storage (`packageStore.ts`).
+  image upload with a 2MB cap, localStorage-backed storage (`packageStore.ts`).
 - Chat, synced across every connected player (`net/chatSync.ts`, `ChatDistributor`),
   riding the same host-authoritative link as everything else via
   `RoomConnection.SideChannel` (now generalized to support more than one channel — see

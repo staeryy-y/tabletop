@@ -9,7 +9,7 @@
 // wired up here yet — see net/signaling.ts.
 import { Application, Container, FederatedPointerEvent, Graphics, Text, TextureStyle } from "pixi.js";
 import { CameraInput, NO_CAMERA_INPUT, stepCamera } from "./camera";
-import { CARD_HEIGHT, CARD_WIDTH, CardDef, renderCard } from "./card";
+import { CARD_HEIGHT, CARD_WIDTH, CardDef, renderCard, resolveDisplay } from "./card";
 import { MatDef, MAT_HEIGHT, MAT_WIDTH, renderMat } from "./mat";
 import { TableSyncClient, TableView } from "../net/roomConnection";
 import { TableEvent } from "../net/syncProtocol";
@@ -89,6 +89,8 @@ interface PlayerInfo {
   name: string;
   color: string;
   eyesClosed: boolean;
+  tokenX: number | null;
+  tokenY: number | null;
 }
 
 export class TableApp implements TableView {
@@ -144,7 +146,7 @@ export class TableApp implements TableView {
    * `pick-up-and-drop` request is sent at release with wherever it ended up, since only
    * the host is allowed to allocate the pile id a stack-split would need (see
    * pileModel.ts's setPile/loadSnapshot doc comment). */
-  private dragging: { pileId: string; view: Container; x: number; y: number; localFloating: PileState | null } | null = null;
+  private dragging: { pileId: string; view: Container; x: number; y: number; offsetX: number; offsetY: number; startX: number; startY: number; moved: boolean; localFloating: PileState | null; ghost: boolean } | null = null;
   /** Dragging the whole-stack grip handle (makeMoveWholeStackHandle) — unlike
    * `dragging` above (the card body itself), this never splits a card off a multi-card
    * pile: it's TableModel.movePile's plain reposition, the same one multi-select's
@@ -152,7 +154,7 @@ export class TableApp implements TableView {
    * either. Explicit feedback: "clicking and dragging on a stacked card should by
    * default drag out one of the cards [the existing `dragging` behavior] — add an
    * additional drag-only handler for the purpose of dragging the entire deck." */
-  private draggingWholePile: { pileId: string; view: Container; x: number; y: number } | null = null;
+  private draggingWholePile: { pileId: string; view: Container; x: number; y: number; offsetX: number; offsetY: number } | null = null;
   private rotating: { pileId: string; view: Container; radians: number } | null = null;
   /** Multi-select (see docs/GAME_DEFINITION.md-adjacent request: "click and drag a box
    * to select multiple cards"). `selectedPileIds` is the source of truth; each id's
@@ -209,8 +211,16 @@ export class TableApp implements TableView {
   // independent; nothing here is synced to other peers (that's presence/table state,
   // out of scope for a camera).
   private cameraInput: CameraInput = { ...NO_CAMERA_INPUT };
-  private onKeyDown = (e: KeyboardEvent) => this.setCameraKey(e.key.toLowerCase(), true);
-  private onKeyUp = (e: KeyboardEvent) => this.setCameraKey(e.key.toLowerCase(), false);
+  private onKeyDown = (e: KeyboardEvent) => {
+    const target = e.target as HTMLElement | null;
+    if (target?.isContentEditable || target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.tagName === "SELECT") return;
+    this.setCameraKey(e.key.toLowerCase(), true);
+  };
+  private onKeyUp = (e: KeyboardEvent) => {
+    const target = e.target as HTMLElement | null;
+    if (target?.isContentEditable || target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.tagName === "SELECT") return;
+    this.setCameraKey(e.key.toLowerCase(), false);
+  };
 
   // Default per-player colored tokens (see docs/GAME_DEFINITION.md's Tokens) — one per
   // connected peer, arranged evenly around the table (seating.ts) so e.g. 3 players form
@@ -218,6 +228,7 @@ export class TableApp implements TableView {
   // its own copy from the presence list (net/signaling.ts), not yet a synced table
   // object (that needs M6's real P2P object sync).
   private playerTokens = new Map<string, Container>();
+  private onPlayerTokenMove: ((peerId: string, x: number, y: number) => void) | null = null;
   /** peerId -> their current color, refreshed on every setPlayers() call — cursors
    * (below) are colored markers, and this is the only place TableApp knows anyone's
    * color at all. */
@@ -453,9 +464,9 @@ export class TableApp implements TableView {
       } else {
         this.redrawPlayerToken(view, player);
       }
-      // Only place it at its default seat until a player first drags it somewhere else
-      // (tracked via a flag on the view itself, since there's no model entry for it).
-      if (!(view as Container & { moved?: boolean }).moved) {
+      if (player.tokenX !== null && player.tokenY !== null) {
+        view.position.set(player.tokenX, player.tokenY);
+      } else {
         view.position.set(seats[i].x, seats[i].y);
       }
     });
@@ -478,21 +489,33 @@ export class TableApp implements TableView {
     }
   }
 
+  setPlayerTokenMoveHandler(handler: ((peerId: string, x: number, y: number) => void) | null): void {
+    this.onPlayerTokenMove = handler;
+  }
+
   private mountPlayerToken(player: PlayerInfo): Container {
     const view = new Container();
     this.redrawPlayerToken(view, player);
     view.eventMode = "static";
     view.cursor = "grab";
     let dragging = false;
+    let offsetX = 0;
+    let offsetY = 0;
     view.on("pointerdown", (e: FederatedPointerEvent) => {
       e.stopPropagation();
+      if (player.peerId !== this.selfPeerId && !this.selfIsGm) return;
+      const local = this.world.toLocal(e.global);
+      offsetX = local.x - view.position.x;
+      offsetY = local.y - view.position.y;
       dragging = true;
     });
     this.app.stage.on("pointermove", (e: FederatedPointerEvent) => {
       if (!dragging) return;
       const local = this.world.toLocal(e.global);
-      view.position.set(local.x, local.y);
-      (view as Container & { moved?: boolean }).moved = true;
+      const x = local.x - offsetX;
+      const y = local.y - offsetY;
+      view.position.set(x, y);
+      this.onPlayerTokenMove?.(player.peerId, x, y);
     });
     this.app.stage.on("pointerup", () => (dragging = false));
     this.app.stage.on("pointerupoutside", () => (dragging = false));
@@ -518,6 +541,10 @@ export class TableApp implements TableView {
     });
     label.anchor.set(0.5);
     view.addChild(label);
+    const name = new Text({ text: player.name, style: { fontFamily: "monospace", fontSize: 12, fill: 0xffffff, stroke: { color: 0x1a1a1a, width: 3 } } });
+    name.anchor.set(0.5, 0);
+    name.position.set(0, PLAYER_TOKEN_RADIUS + 5);
+    view.addChild(name);
   }
 
   /** Spawn a brand-new standalone pile (a GM-only action per the object model — see
@@ -616,6 +643,17 @@ export class TableApp implements TableView {
       e.stopPropagation();
       this.doFlip(pile.id);
     });
+    view.on("click", (e: FederatedPointerEvent) => {
+      if (e.button !== 0) return;
+      const press = (view as Container & { press?: { x: number; y: number } }).press;
+      if (press && Math.hypot(e.global.x - press.x, e.global.y - press.y) > 5) return;
+      const current = this.model.getPile(pile.id);
+      const top = current?.cards[current.cards.length - 1];
+      if (top) this.openCardReader(resolveDisplay(top.def, top.faceUp, top.hiddenBy, this.selfPeerId).face);
+    });
+    view.on("pointerdown", (e: FederatedPointerEvent) => {
+      (view as Container & { press?: { x: number; y: number } }).press = { x: e.global.x, y: e.global.y };
+    });
 
     // The face is drawn into its own child container, not `view` directly, so redraw()
     // (which clears and repaints it every time) never wipes out the rotate handle below.
@@ -682,7 +720,8 @@ export class TableApp implements TableView {
     const view = this.views.get(pileId);
     const pile = this.model.getPile(pileId);
     if (!view || !pile) return;
-    this.draggingWholePile = { pileId, view, x: pile.x, y: pile.y };
+    const local = this.world.toLocal(e.global);
+    this.draggingWholePile = { pileId, view, x: pile.x, y: pile.y, offsetX: local.x - pile.x, offsetY: local.y - pile.y };
     this.lastDragHintAt = 0; // reuse the same cosmetic-preview throttle as a normal card drag
     view.alpha = 0.85;
     view.zIndex = 1000;
@@ -694,6 +733,37 @@ export class TableApp implements TableView {
     if (!pile || !faceLayer) return;
     const top = pile.cards[pile.cards.length - 1];
     renderCard(faceLayer, top.def, top.faceUp, top.hiddenBy, this.selfPeerId, pile.cards.length, (peerId) => this.colorForPeer(peerId));
+  }
+
+  private openCardReader(face: CardDef["front"]): void {
+    const overlay = document.createElement("div");
+    overlay.className = "card-reader-overlay";
+    const panel = document.createElement("article");
+    panel.className = "card-reader";
+    if (face.image) {
+      const image = document.createElement("img");
+      image.src = face.image;
+      image.className = face.imageFit === "cover" ? "cover" : "contain";
+      panel.appendChild(image);
+    }
+    const title = document.createElement("h2");
+    title.textContent = face.title;
+    panel.appendChild(title);
+    if (face.text) {
+      const body = document.createElement("p");
+      body.textContent = face.text;
+      panel.appendChild(body);
+    }
+    if (!face.image && !face.title && !face.text) {
+      const empty = document.createElement("p");
+      empty.textContent = "Face-down card";
+      panel.appendChild(empty);
+    }
+    const close = () => overlay.remove();
+    overlay.onclick = close;
+    panel.onclick = (event) => event.stopPropagation();
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
   }
 
   /** A player's current presence color, or a plain neutral gray if they're unknown
@@ -1141,10 +1211,22 @@ export class TableApp implements TableView {
       // only the host is allowed to do that (see the `dragging` field's doc comment
       // above). Just grab the pile's existing view and follow the pointer with it —
       // pick-up-and-drop is a single atomic request sent once, on release.
-      const view = this.views.get(pileId);
+      const sourceView = this.views.get(pileId);
       const pile = this.model.getPile(pileId);
-      if (!view || !pile) return;
-      this.dragging = { pileId, view, x: pile.x, y: pile.y, localFloating: null };
+      if (!sourceView || !pile) return;
+      const local = this.world.toLocal(e.global);
+      // Keep the source stack visible while its top card is being pulled away. The
+      // authoritative split still occurs atomically on drop, but this lightweight
+      // local ghost gives the physical, unambiguous feedback of a card leaving a deck.
+      const ghost = pile.cards.length > 1;
+      const view = ghost ? new Container() : sourceView;
+      if (ghost) {
+        const top = pile.cards[pile.cards.length - 1];
+        renderCard(view, top.def, top.faceUp, top.hiddenBy, this.selfPeerId, 1, (peerId) => this.colorForPeer(peerId));
+        view.position.set(pile.x, pile.y);
+        this.world.addChild(view);
+      }
+      this.dragging = { pileId, view, x: pile.x, y: pile.y, offsetX: local.x - pile.x, offsetY: local.y - pile.y, startX: local.x, startY: local.y, moved: false, localFloating: null, ghost };
       this.lastDragHintAt = 0; // let the very first move below send a hint immediately
     } else {
       // No syncClient (a bare, room-less sandbox) — the pre-M6 behavior: actually split
@@ -1162,7 +1244,8 @@ export class TableApp implements TableView {
         if (sourceView) this.redraw(pileId);
         view = this.mountView(floating);
       }
-      this.dragging = { pileId: floating.id, view, x: floating.x, y: floating.y, localFloating: floating };
+      const local = this.world.toLocal(e.global);
+      this.dragging = { pileId: floating.id, view, x: floating.x, y: floating.y, offsetX: local.x - floating.x, offsetY: local.y - floating.y, startX: local.x, startY: local.y, moved: false, localFloating: floating, ghost: false };
     }
 
     this.dragging.view.alpha = 0.85;
@@ -1266,20 +1349,21 @@ export class TableApp implements TableView {
       if (!this.syncClient) this.model.setRotation(this.rotating.pileId, angle);
       else this.maybeSendRotateHint(this.rotating.pileId, angle);
     } else if (this.dragging) {
-      this.dragging.x = local.x;
-      this.dragging.y = local.y;
-      this.dragging.view.position.set(local.x, local.y);
+      this.dragging.moved = this.dragging.moved || Math.hypot(local.x - this.dragging.startX, local.y - this.dragging.startY) > 5;
+      this.dragging.x = local.x - this.dragging.offsetX;
+      this.dragging.y = local.y - this.dragging.offsetY;
+      this.dragging.view.position.set(this.dragging.x, this.dragging.y);
       if (this.dragging.localFloating) {
-        this.dragging.localFloating.x = local.x;
-        this.dragging.localFloating.y = local.y;
+        this.dragging.localFloating.x = this.dragging.x;
+        this.dragging.localFloating.y = this.dragging.y;
       } else {
-        this.maybeSendDragHint(this.dragging.pileId, local.x, local.y);
+        this.maybeSendDragHint(this.dragging.pileId, this.dragging.x, this.dragging.y);
       }
     } else if (this.draggingWholePile) {
-      this.draggingWholePile.x = local.x;
-      this.draggingWholePile.y = local.y;
-      this.draggingWholePile.view.position.set(local.x, local.y);
-      this.maybeSendDragHint(this.draggingWholePile.pileId, local.x, local.y);
+      this.draggingWholePile.x = local.x - this.draggingWholePile.offsetX;
+      this.draggingWholePile.y = local.y - this.draggingWholePile.offsetY;
+      this.draggingWholePile.view.position.set(this.draggingWholePile.x, this.draggingWholePile.y);
+      this.maybeSendDragHint(this.draggingWholePile.pileId, this.draggingWholePile.x, this.draggingWholePile.y);
     } else if (this.rotatingPiece) {
       const angle = Math.atan2(local.x - this.rotatingPiece.view.position.x, -(local.y - this.rotatingPiece.view.position.y));
       this.rotatingPiece.radians = angle;
@@ -1410,9 +1494,23 @@ export class TableApp implements TableView {
     }
 
     if (!this.dragging) return;
-    const { pileId, view, x, y, localFloating } = this.dragging;
+    const { pileId, view, x, y, localFloating, ghost, moved } = this.dragging;
     this.dragging = null;
     view.alpha = 1;
+
+    // A click is a read-only gesture. The click handler opens the reader; do not also
+    // send a pickup/drop request that can race the reader and make a hidden card appear
+    // to vanish. A real drag crosses the small movement threshold above.
+    if (!moved) {
+      if (ghost) this.world.removeChild(view);
+      if (localFloating) {
+        if (!this.model.getPile(localFloating.id)) {
+          this.model.setPile(localFloating);
+          this.redraw(localFloating.id);
+        }
+      }
+      return;
+    }
 
     if (this.syncClient) {
       // One request for the whole gesture — see the `dragging` field's doc comment.
@@ -1420,6 +1518,7 @@ export class TableApp implements TableView {
       // remainder behind) comes back through applyEvent(), which is the only thing
       // allowed to move this view now.
       this.syncClient.sendRequest({ type: "pick-up-and-drop", pileId, x, y, mergeRadius: MERGE_RADIUS });
+      if (ghost) this.world.removeChild(view);
       return;
     }
 

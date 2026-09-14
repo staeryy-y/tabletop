@@ -34,10 +34,12 @@ interface YamlFace {
   text?: string;
   color?: number;
   image?: string;
+  image_fit?: "contain" | "cover";
 }
 interface YamlCardEntry {
   id: string;
   front: YamlFace;
+  count?: number;
 }
 interface YamlCardSet {
   set: string;
@@ -61,6 +63,10 @@ interface YamlMatEntry {
   image?: string;
   symbol?: string;
   locked?: boolean;
+  text?: string;
+  background?: number;
+  width?: number;
+  height?: number;
 }
 interface YamlMatSet {
   set: string;
@@ -102,7 +108,7 @@ function mapDie(d: { key: string; sides?: number; faces?: number[] }): DiceDef {
 }
 
 function mapCardEntry(e: YamlCardEntry): CardEntry {
-  return { id: e.id, front: { title: e.front.title ?? "", text: e.front.text, color: e.front.color, image: e.front.image } };
+  return { id: e.id, front: { title: e.front.title ?? "", text: e.front.text, color: e.front.color, image: e.front.image, ...(e.front.image_fit ? { imageFit: e.front.image_fit } : {}) }, count: e.count };
 }
 
 function mapCardSet(s: YamlCardSet): CardSet {
@@ -118,7 +124,7 @@ function mapPieceSet(s: YamlPieceSet): PieceSet {
 }
 
 function mapMatEntry(e: YamlMatEntry): MatEntry {
-  return { id: e.id, image: e.image ?? e.front?.image, symbol: e.symbol, locked: e.locked };
+  return { id: e.id, image: e.image ?? e.front?.image, symbol: e.symbol, locked: e.locked, text: e.text, background: e.background, width: e.width, height: e.height };
 }
 
 function mapMatSet(s: YamlMatSet): MatSet {

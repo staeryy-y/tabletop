@@ -18,6 +18,7 @@ export interface CardFace {
    * fills in a fallback) so there's something reasonable to show for the brief window
    * before the image finishes decoding. */
   image?: string;
+  imageFit?: "contain" | "cover";
 }
 
 export interface CardDef {
@@ -123,26 +124,48 @@ function drawColorFace(container: Container, face: CardFace): void {
   }
 }
 
-/** An uploaded image fills the whole card in place of the color/title/text rendering
- * above — real card art (a scan, a painted illustration) already carries its own title,
- * so overlaying our own text on top would just look wrong. Stretched to exactly
- * CARD_WIDTH×CARD_HEIGHT rather than cropped/letterboxed — simple, and good enough for
- * v1 (docs/ARCHITECTURE.md "Visual style" doesn't require anything fancier here). */
-function drawImageFace(container: Container, texture: Texture): void {
+/** Trading-card layout: art occupies a fixed window while title and rules text remain
+ * readable on translucent gray bands. Art preserves its aspect ratio; authors can opt
+ * into a cropped `cover` fit when filling the window matters more than its edges. */
+function drawImageFace(container: Container, texture: Texture, face: CardFace): void {
+  const artTop = -CARD_HEIGHT / 2 + 22;
+  const artHeight = 64;
   const sprite = new Sprite(texture);
   sprite.anchor.set(0.5);
-  sprite.width = CARD_WIDTH;
-  sprite.height = CARD_HEIGHT;
+  const scale = face.imageFit === "cover"
+    ? Math.max(CARD_WIDTH / texture.width, artHeight / texture.height)
+    : Math.min(CARD_WIDTH / texture.width, artHeight / texture.height);
+  sprite.width = texture.width * scale;
+  sprite.height = texture.height * scale;
+  sprite.position.set(0, artTop + artHeight / 2);
   container.addChild(sprite);
 
   // Match the color-face's rounded-rect card shape, so a mixed deck (some cards with
   // art, some without) still reads as one consistent set of cards.
   const mask = new Graphics();
-  mask.roundRect(-CARD_WIDTH / 2, -CARD_HEIGHT / 2, CARD_WIDTH, CARD_HEIGHT, 8);
+  mask.rect(-CARD_WIDTH / 2 + 3, artTop, CARD_WIDTH - 6, artHeight);
   mask.fill({ color: 0xffffff });
   container.addChild(mask);
   sprite.mask = mask;
 
+  const chrome = new Graphics();
+  chrome.roundRect(-CARD_WIDTH / 2, -CARD_HEIGHT / 2, CARD_WIDTH, CARD_HEIGHT, 8);
+  chrome.fill({ color: 0x202020, alpha: 0.2 });
+  chrome.rect(-CARD_WIDTH / 2 + 2, -CARD_HEIGHT / 2 + 3, CARD_WIDTH - 4, 19);
+  chrome.fill({ color: 0x777777, alpha: 0.2 });
+  chrome.rect(-CARD_WIDTH / 2 + 2, artTop + artHeight + 2, CARD_WIDTH - 4, CARD_HEIGHT / 2 - artHeight + 1);
+  chrome.fill({ color: 0x777777, alpha: 0.2 });
+  container.addChild(chrome);
+  const title = new Text({ text: face.title, style: { fontFamily: "monospace", fontSize: 11, fontWeight: "bold", fill: 0xffffff, wordWrap: true, wordWrapWidth: CARD_WIDTH - 10, align: "center" } });
+  title.anchor.set(0.5, 0);
+  title.position.set(0, -CARD_HEIGHT / 2 + 5);
+  container.addChild(title);
+  if (face.text) {
+    const body = new Text({ text: face.text, style: { fontFamily: "monospace", fontSize: 8, fill: 0xffffff, wordWrap: true, wordWrapWidth: CARD_WIDTH - 10, align: "center" } });
+    body.anchor.set(0.5, 0);
+    body.position.set(0, artTop + artHeight + 6);
+    container.addChild(body);
+  }
   const border = new Graphics();
   border.roundRect(-CARD_WIDTH / 2, -CARD_HEIGHT / 2, CARD_WIDTH, CARD_HEIGHT, 8);
   border.stroke({ width: 2, color: 0x1a1a1a });
@@ -183,7 +206,7 @@ function drawFace(container: Container, face: CardFace, badge?: Badge): void {
     loadImageTexture(face.image, (texture) => {
       if (renderTokens.get(container) !== token) return;
       container.removeChildren();
-      drawImageFace(container, texture);
+      drawImageFace(container, texture, face);
       if (badge) drawBadge(container, badge);
     });
     return;

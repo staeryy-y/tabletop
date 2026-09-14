@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import { GamePackage, createEmptyPackage } from "../packages/gamePackage";
+import { GamePackage, createEmptyPackage, normalizePackage } from "../packages/gamePackage";
 import { PackageStore, StoredPackage, newPackageId } from "../packages/packageStore";
 import { UI_TEXT } from "../uiText";
 import { GamePackageEditor } from "./GamePackageEditor";
@@ -7,7 +7,7 @@ import { GamePackageEditor } from "./GamePackageEditor";
 const T = UI_TEXT.gamePackages;
 
 // The game-package manager: create/edit/import/export/delete packages, entirely
-// client-side (IndexedDB — see packages/packageStore.ts) since the server never stores
+// client-side (localStorage — see packages/packageStore.ts) since the server never stores
 // a room's rules or assets (docs/DECISIONS.md D14). Picking one of these when creating
 // a room, and actually loading it into a live table, is separate follow-up work — this
 // is the authoring side.
@@ -58,7 +58,7 @@ export function GamePackages() {
       if (!pkg || typeof pkg !== "object" || !Array.isArray(pkg.cardSets)) {
         throw new Error(T.notAPackageFile);
       }
-      await store.save(newPackageId(), pkg);
+      await store.save(newPackageId(), normalizePackage(pkg));
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : T.importFailedFallback);

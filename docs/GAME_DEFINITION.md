@@ -50,6 +50,13 @@ There is no separate authored "deck" type. A card set is just a list of **Card**
 definitions (front content, optional shared back), and a deck is what you get when the
 starting layout places several of them at the same table position — they merge into a
 **Stack** at runtime, the same way dropping physical cards on top of each other does.
+Set `count` on an entry when that card has multiple copies in its starting stack; it
+defaults to one.
+
+Image-backed card fronts are rendered in a trading-card layout with a preserved-aspect
+art window and readable title/rules bands. Authors may set `image_fit: contain` (the
+default, showing the whole image) or `image_fit: cover` to crop the edges and fill the
+art window.
 
 ```yaml
 cards:
@@ -57,6 +64,7 @@ cards:
     back: assets/event-back.png
     entries:
       - id: creepy-puppet
+        count: 3
         front: { title: "Creepy Puppet", text: "The player on your right rolls..." }
       - id: revolver
         front: { title: "Revolver", text: "An old, potent-looking weapon..." }
