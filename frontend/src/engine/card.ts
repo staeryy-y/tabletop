@@ -87,11 +87,13 @@ function loadImageTexture(dataUri: string, onReady: (texture: Texture) => void):
   }
   const img = new Image();
   img.onload = () => {
+    console.info("[rpg-tabletop][card-image] decoded", { bytes: dataUri.length, type: dataUri.slice(5, dataUri.indexOf(";")) });
     const texture = Texture.from(img);
     imageTextureCache.set(dataUri, texture);
     onReady(texture);
   };
   img.onerror = () => {
+    console.warn("[rpg-tabletop][card-image] failed to decode", { bytes: dataUri.length, prefix: dataUri.slice(0, 32) });
     // Leave whatever fallback drawFace already drew in place — a bad/corrupt data URI
     // shouldn't crash the table, just mean this one card never gets its art.
   };
