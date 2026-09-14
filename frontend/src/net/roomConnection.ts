@@ -6,8 +6,7 @@
 // sees the two interfaces below.
 import { TableModel, TableSnapshot } from "../engine/pileModel";
 import { PeerLink } from "./peerLink";
-import { PeerLinkWithFallback } from "./peerLinkWithFallback";
-import { SignalingLike } from "./relayPeerLink";
+import { RelayPeerLink, SignalingLike } from "./relayPeerLink";
 import { HostTableSync, TableEvent, TableRequest } from "./syncProtocol";
 import { PeerRole } from "./webrtcPeerLink";
 
@@ -45,7 +44,10 @@ export interface SideChannel {
  * peerLinkWithFallback.ts: real WebRTC, falling back to the WS-relay automatically. */
 export type PeerLinkFactory = (signaling: SignalingLike, remotePeerId: string, role: PeerRole) => PeerLink;
 
-const defaultLinkFactory: PeerLinkFactory = (signaling, remotePeerId, role) => new PeerLinkWithFallback(signaling, remotePeerId, role);
+// The signaling WebSocket is the authoritative room transport. Keeping the default
+// path on the relay avoids browser-dependent WebRTC message-size/ICE races; WebRTC
+// remains injectable for experiments/tests, but gameplay never depends on it.
+const defaultLinkFactory: PeerLinkFactory = (signaling, remotePeerId) => new RelayPeerLink(signaling, remotePeerId);
 
 /** A peer-to-host message that isn't a table mutation — asks the host to (re)send a
  * snapshot. Lives outside TableRequest's union (syncProtocol.ts) since it's a
