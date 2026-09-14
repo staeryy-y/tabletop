@@ -71,6 +71,9 @@ const SELECTION_OUTLINE_COLOR = 0x4fa8ff;
 const GROUP_HANDLE_RADIUS = 12;
 const GROUP_HANDLE_COLOR = 0xffd24f;
 const FLIP_PARTICLE_COUNT = 14;
+const REMOTE_POSITION_SMOOTHING = 20;
+const REMOTE_ROTATION_SMOOTHING = 22;
+const REMOTE_SNAP_DISTANCE = 260;
 
 /** Rotate the vector (x, y) by `radians`, using the same rotation convention as
  * PixiJS's own Container.rotation (and this file's existing atan2(dx, -dy) reading of
@@ -133,6 +136,7 @@ export class TableApp implements TableView {
   private matsLayer = new Container();
   private effectsLayer = new Container();
   private flipParticles: Array<{ view: Graphics; vx: number; vy: number; life: number }> = [];
+  private motionTargets = new Map<string, { view: Container; x: number; y: number; rotation: number }>();
   private matViews = new Map<string, Container>();
   private matFaceLayers = new Map<string, Container>();
   /** This client's own GM status, per docs/DECISIONS.md D26 — set once ui/RoomTable.tsx
@@ -292,6 +296,7 @@ export class TableApp implements TableView {
     window.addEventListener("keyup", this.onKeyUp);
     this.app.ticker.add((ticker) => this.tickCamera(ticker.deltaMS / 1000));
     this.app.ticker.add((ticker) => this.tickEffects(ticker.deltaMS / 1000));
+    this.app.ticker.add((ticker) => this.tickMotion(ticker.deltaMS / 1000));
     this.initialized = true;
     const pending = this.pendingEvents;
     this.pendingEvents = [];
@@ -353,39 +358,39 @@ export class TableApp implements TableView {
       const view = this.views.get(event.pile.id);
       if (view) {
         view.alpha = 1; // in case a drag-hint below had dimmed it — this is the real, final position now
-        view.position.set(event.pile.x, event.pile.y);
-        view.rotation = event.pile.rotation;
+        this.setMotionTarget("pile", event.pile.id, view, event.pile.x, event.pile.y, event.pile.rotation);
         this.redraw(event.pile.id);
       } else {
         this.mountView(event.pile);
       }
     } else if (event.type === "pile-removed") {
       this.model.removePile(event.pileId);
+      this.motionTargets.delete(`pile:${event.pileId}`);
       this.removeView(event.pileId);
     } else if (event.type === "piece-upserted") {
       this.model.setPiece(event.piece);
       const view = this.pieceViews.get(event.piece.id);
       if (view) {
-        view.position.set(event.piece.x, event.piece.y);
-        view.rotation = event.piece.rotation;
+        this.setMotionTarget("piece", event.piece.id, view, event.piece.x, event.piece.y, event.piece.rotation);
       } else {
         this.mountPieceView(event.piece);
       }
     } else if (event.type === "piece-removed") {
       this.model.removePiece(event.pieceId);
+      this.motionTargets.delete(`piece:${event.pieceId}`);
       this.removePieceView(event.pieceId);
     } else if (event.type === "mat-upserted") {
       this.model.setMat(event.mat);
       const view = this.matViews.get(event.mat.id);
       if (view) {
-        view.position.set(event.mat.x, event.mat.y);
-        view.rotation = event.mat.rotation;
+        this.setMotionTarget("mat", event.mat.id, view, event.mat.x, event.mat.y, event.mat.rotation);
         this.redrawMat(event.mat.id); // locked state (and hence the lock badge) can change too
       } else {
         this.mountMatView(event.mat);
       }
     } else if (event.type === "mat-removed") {
       this.model.removeMat(event.matId);
+      this.motionTargets.delete(`mat:${event.matId}`);
       this.removeMatView(event.matId);
     } else if (event.type === "snapshot") {
       for (const pileId of [...this.views.keys()]) this.removeView(pileId);
@@ -403,14 +408,14 @@ export class TableApp implements TableView {
       // arrives as a pile-upserted/pile-removed above, which is what corrects this.
       const view = this.views.get(event.pileId);
       if (view) {
-        view.position.set(event.x, event.y);
+        this.setMotionTarget("pile", event.pileId, view, event.x, event.y, view.rotation);
         view.alpha = REMOTE_DRAG_ALPHA;
       }
     } else if (event.type === "rotate-hint") {
       // Same idea as drag-hint, for the rotate-handle gesture — no alpha dimming
       // here, since a local rotate doesn't dim its own view either.
       const view = this.views.get(event.pileId);
-      if (view) view.rotation = event.radians;
+      if (view) this.setMotionTarget("pile", event.pileId, view, view.x, view.y, event.radians);
     } else if (event.type === "cursor-hint") {
       this.updateCursor(event.byPeerId, event.x, event.y);
     }
@@ -1689,6 +1694,43 @@ export class TableApp implements TableView {
       if (p.life <= 0) {
         p.view.destroy();
         this.flipParticles.splice(i, 1);
+      }
+    }
+  }
+
+  /** Network updates arrive in bursts (especially over the relay). Keep the
+   * authoritative model untouched, but ease already-mounted views toward their
+   * latest target so remote drags and rotations read as continuous motion. */
+  private setMotionTarget(kind: string, id: string, view: Container, x: number, y: number, rotation: number): void {
+    const key = `${kind}:${id}`;
+    const distance = Math.hypot(view.x - x, view.y - y);
+    if (distance > REMOTE_SNAP_DISTANCE) {
+      view.position.set(x, y);
+      view.rotation = rotation;
+      this.motionTargets.delete(key);
+      return;
+    }
+    this.motionTargets.set(key, { view, x, y, rotation });
+  }
+
+  private tickMotion(dt: number): void {
+    const positionAlpha = 1 - Math.exp(-REMOTE_POSITION_SMOOTHING * dt);
+    const rotationAlpha = 1 - Math.exp(-REMOTE_ROTATION_SMOOTHING * dt);
+    for (const [key, target] of this.motionTargets) {
+      if (target.view.destroyed) {
+        this.motionTargets.delete(key);
+        continue;
+      }
+      target.view.x += (target.x - target.view.x) * positionAlpha;
+      target.view.y += (target.y - target.view.y) * positionAlpha;
+      let delta = target.rotation - target.view.rotation;
+      while (delta > Math.PI) delta -= Math.PI * 2;
+      while (delta < -Math.PI) delta += Math.PI * 2;
+      target.view.rotation += delta * rotationAlpha;
+      if (Math.hypot(target.x - target.view.x, target.y - target.view.y) < 0.15 && Math.abs(delta) < 0.002) {
+        target.view.position.set(target.x, target.y);
+        target.view.rotation = target.rotation;
+        this.motionTargets.delete(key);
       }
     }
   }
