@@ -61,6 +61,7 @@ function isRequestSnapshot(msg: unknown): boolean {
 export class RoomConnection {
   private hostSync: HostTableSync | null = null;
   private peerLinks = new Map<string, PeerLink>();
+  private pendingPeerIds = new Set<string>();
   private linkToHost: PeerLink | null = null;
   private sideChannels: SideChannel[] = [];
 
@@ -97,7 +98,8 @@ export class RoomConnection {
       () => [this.selfPeerId, ...this.peerLinks.keys()],
       this.getGmPeerId,
     );
-    for (const peerId of existingPeerIds) this.addPeer(peerId);
+    for (const peerId of [...this.pendingPeerIds, ...existingPeerIds]) this.addPeer(peerId);
+    this.pendingPeerIds.clear();
     return { sendRequest: (req) => this.hostSync!.handleRequest(this.selfPeerId, req) };
   }
 
@@ -152,7 +154,12 @@ export class RoomConnection {
    * way a peer gets caught up — see becomePeerOf's own request-snapshot call for why
    * relying on this alone isn't safe. */
   addPeer(peerId: string): void {
-    if (!this.hostSync || peerId === this.selfPeerId || this.peerLinks.has(peerId)) return;
+    if (peerId === this.selfPeerId || this.peerLinks.has(peerId)) return;
+    if (!this.hostSync) {
+      this.pendingPeerIds.add(peerId);
+      console.info("[rpg-tabletop][sync] queued peer until host is ready", { host: this.selfPeerId, peer: peerId });
+      return;
+    }
     console.info("[rpg-tabletop][sync] linking peer", { host: this.selfPeerId, peer: peerId });
     // The host always answers rather than initiates — see becomePeerOf's comment.
     const link = this.makeLink(this.signaling, peerId, "answerer");
@@ -167,6 +174,7 @@ export class RoomConnection {
 
   /** A peer left the room — drop their link. Safe to call regardless of role. */
   removePeer(peerId: string): void {
+    this.pendingPeerIds.delete(peerId);
     this.peerLinks.get(peerId)?.close();
     this.peerLinks.delete(peerId);
   }
@@ -237,6 +245,7 @@ export class RoomConnection {
 
   private teardownHostRole(): void {
     this.hostSync = null;
+    this.pendingPeerIds.clear();
     for (const link of this.peerLinks.values()) link.close();
     this.peerLinks.clear();
   }
