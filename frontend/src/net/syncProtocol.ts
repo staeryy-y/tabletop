@@ -19,7 +19,7 @@
 // it, the same way a physical secret is "secure" only because no one hands it around.
 import { CardDef } from "../engine/card";
 import { MatDef } from "../engine/mat";
-import { CardInstance, MatState, PieceState, PileState, TableModel } from "../engine/pileModel";
+import { CardInstance, MatState, PieceState, PileState, TableAnnotation, TableModel } from "../engine/pileModel";
 import { PieceDef } from "../engine/piece";
 
 export type TableRequest =
@@ -88,7 +88,10 @@ export type TableRequest =
    * gesture, so every other player's cursor is always visible ("to make it feel more
    * alive") rather than only appearing mid-drag. No pileId here since there's nothing
    * being manipulated; it's purely presence. */
-  | { type: "cursor-hint"; x: number; y: number };
+  | { type: "cursor-hint"; x: number; y: number }
+  | { type: "create-annotation"; annotation: Omit<TableAnnotation, "id"> }
+  | { type: "remove-annotation"; annotationId: string };
+  
 
 export type TableEvent =
   | { type: "pile-upserted"; pile: PileState }
@@ -97,11 +100,13 @@ export type TableEvent =
   | { type: "piece-removed"; pieceId: string }
   | { type: "mat-upserted"; mat: MatState }
   | { type: "mat-removed"; matId: string }
+  | { type: "annotation-upserted"; annotation: TableAnnotation }
+  | { type: "annotation-removed"; annotationId: string }
   /** `pieces`/`mats` are optional (not just possibly-empty) purely so every
    * pre-existing literal of this event (tests, older code) that only ever knew about
    * piles keeps type-checking unchanged — see PeerTableSync.applyEvent's `?? []` and
    * TableModel.loadSnapshot's matching default parameters. */
-  | { type: "snapshot"; piles: PileState[]; pieces?: PieceState[]; mats?: MatState[]; revision?: number }
+  | { type: "snapshot"; piles: PileState[]; pieces?: PieceState[]; mats?: MatState[]; annotations?: TableAnnotation[]; revision?: number }
   | { type: "drag-hint"; pileId: string; x: number; y: number; byPeerId: string }
   | { type: "rotate-hint"; pileId: string; radians: number; byPeerId: string }
   | { type: "cursor-hint"; x: number; y: number; byPeerId: string };
@@ -182,6 +187,7 @@ export class HostTableSync {
     const touched = new Set<string>();
     const touchedPieces = new Set<string>();
     const touchedMats = new Set<string>();
+    const touchedAnnotations = new Set<string>();
 
     switch (req.type) {
       case "spawn": {
@@ -315,12 +321,25 @@ export class HostTableSync {
         this.model.setMatLocked(req.matId, req.locked);
         touchedMats.add(req.matId);
         break;
+      case "create-annotation": {
+        const annotation = this.model.createAnnotation(req.annotation);
+        touchedAnnotations.add(annotation.id);
+        break;
+      }
+      case "remove-annotation":
+        this.model.removeAnnotation(req.annotationId);
+        touchedAnnotations.add(req.annotationId);
+        break;
     }
 
-    if (touched.size || touchedPieces.size || touchedMats.size) this.revision++;
+    if (touched.size || touchedPieces.size || touchedMats.size || touchedAnnotations.size) this.revision++;
     this.emitTouched(touched);
     this.emitTouchedPieces(touchedPieces);
     this.emitTouchedMats(touchedMats);
+    for (const id of touchedAnnotations) {
+      const annotation = this.model.getAnnotation(id);
+      for (const recipient of this.recipients()) this.broadcast(recipient, annotation ? { type: "annotation-upserted", annotation } : { type: "annotation-removed", annotationId: id });
+    }
   }
 
   /** True unless the mat is both real and locked by someone other than the GM — see
@@ -391,15 +410,18 @@ export class HostTableSync {
     const piles = this.model.allPiles().map((p) => redactPileFor(p, recipientPeerId));
     const pieces = this.model.allPieces();
     const mats = this.model.allMats();
+    const annotations = this.model.allAnnotations();
     console.info("[rpg-tabletop][sync] sending snapshot", {
       recipientPeerId,
       piles: piles.map((p) => { const top = p.cards[p.cards.length - 1]; return { id: p.id, cards: p.cards.length, top: top ? { title: top.def.front.title, image: !!top.def.front.image, backImage: !!top.def.back.image, faceUp: top.faceUp, hiddenBy: top.hiddenBy } : null }; }),
       pieces: pieces.length,
       mats: mats.length,
     });
-    const snapshot: TableEvent = this.revision === 0
+    const snapshot: TableEvent = this.revision === 0 && annotations.length === 0
       ? { type: "snapshot", piles, pieces, mats }
-      : { type: "snapshot", piles, pieces, mats, revision: this.revision };
+      : this.revision === 0
+        ? { type: "snapshot", piles, pieces, mats, annotations }
+      : { type: "snapshot", piles, pieces, mats, annotations, revision: this.revision };
     this.broadcast(recipientPeerId, snapshot);
   }
 }
@@ -464,12 +486,18 @@ export class PeerTableSync {
       case "mat-removed":
         this.model.removeMat(event.matId);
         break;
+      case "annotation-upserted":
+        this.model.setAnnotation(event.annotation);
+        break;
+      case "annotation-removed":
+        this.model.removeAnnotation(event.annotationId);
+        break;
       case "snapshot":
         // Relay delivery and reconnects can reorder messages. Never let an older
         // full snapshot overwrite newer upsert/remove events already applied.
         if (event.revision !== undefined && event.revision < this.latestRevision) return;
         if (event.revision !== undefined) this.latestRevision = event.revision;
-        this.model.loadSnapshot(event.piles, event.pieces ?? [], event.mats ?? []);
+        this.model.loadSnapshot(event.piles, event.pieces ?? [], event.mats ?? [], event.annotations ?? []);
         break;
       case "drag-hint":
       case "rotate-hint":

@@ -30,6 +30,19 @@ export interface PileState {
 
 export type DropResult = { kind: "merged"; targetId: string } | { kind: "placed"; pile: PileState };
 
+export type AnnotationKind = "text" | "line" | "rect" | "circle";
+export interface TableAnnotation {
+  readonly id: string;
+  kind: AnnotationKind;
+  x: number;
+  y: number;
+  x2?: number;
+  y2?: number;
+  text?: string;
+  color: number;
+  width: number;
+}
+
 /** The complete contents of a table — piles, pieces, and mats together — used wherever
  * a full snapshot needs to travel as one value: the client-side recovery store
  * (net/tableStore.ts), the signaling server's recovery blob (net/roomConnection.ts's
@@ -41,6 +54,7 @@ export interface TableSnapshot {
   piles: PileState[];
   pieces: PieceState[];
   mats: MatState[];
+  annotations?: TableAnnotation[];
 }
 
 /** A placed Piece — see docs/GAME_DEFINITION.md "Pieces: board tiles, terrain, and
@@ -79,6 +93,8 @@ export class TableModel {
   private nextPieceId = 1;
   private mats = new Map<string, MatState>();
   private nextMatId = 1;
+  private annotations = new Map<string, TableAnnotation>();
+  private nextAnnotationId = 1;
 
   private newId(): string {
     return `pile-${this.nextId++}`;
@@ -90,6 +106,17 @@ export class TableModel {
 
   private newMatId(): string {
     return `mat-${this.nextMatId++}`;
+  }
+
+  private newAnnotationId(): string { return `annotation-${this.nextAnnotationId++}`; }
+  allAnnotations(): TableAnnotation[] { return [...this.annotations.values()]; }
+  getAnnotation(id: string): TableAnnotation | undefined { return this.annotations.get(id); }
+  setAnnotation(annotation: TableAnnotation): void { this.annotations.set(annotation.id, annotation); }
+  removeAnnotation(id: string): void { this.annotations.delete(id); }
+  createAnnotation(annotation: Omit<TableAnnotation, "id">): TableAnnotation {
+    const value = { ...annotation, id: this.newAnnotationId() };
+    this.annotations.set(value.id, value);
+    return value;
   }
 
   spawnCard(def: CardDef, x: number, y: number): PileState {
@@ -137,13 +164,15 @@ export class TableModel {
    * docs/NETWORKING.md "Host migration") or a joining peer receives the current table
    * state. `pieces`/`mats` default to empty so every existing call site (and every
    * existing test) that only ever knew about piles keeps working unchanged. */
-  loadSnapshot(piles: PileState[], pieces: PieceState[] = [], mats: MatState[] = []): void {
+  loadSnapshot(piles: PileState[], pieces: PieceState[] = [], mats: MatState[] = [], annotations: TableAnnotation[] = []): void {
     this.piles.clear();
     for (const pile of piles) this.piles.set(pile.id, pile);
     this.pieces.clear();
     for (const piece of pieces) this.pieces.set(piece.id, piece);
     this.mats.clear();
     for (const mat of mats) this.mats.set(mat.id, mat);
+    this.annotations.clear();
+    for (const annotation of annotations) this.annotations.set(annotation.id, annotation);
   }
 
   topCard(id: string): CardInstance | undefined {

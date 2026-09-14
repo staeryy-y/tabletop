@@ -225,7 +225,7 @@ export class RoomConnection {
    * docs/NETWORKING.md "Host migration" (app/signaling.py's `snapshot` message) — only
    * meaningful while this client is host. */
   currentSnapshot(): TableSnapshot {
-    const snapshot = { piles: this.model.allPiles(), pieces: this.model.allPieces(), mats: this.model.allMats() };
+    const snapshot = { piles: this.model.allPiles(), pieces: this.model.allPieces(), mats: this.model.allMats(), annotations: this.model.allAnnotations() };
     console.info("[rpg-tabletop][sync] snapshot", { self: this.selfPeerId, piles: snapshot.piles.length, pieces: snapshot.pieces.length, mats: snapshot.mats.length });
     return snapshot;
   }
@@ -235,7 +235,7 @@ export class RoomConnection {
    * there wasn't one yet — a very short-lived room), then take on the host role for
    * whoever's still connected. */
   becomeHostFromMigration(snapshot: TableSnapshot | null, remainingPeerIds: string[]): TableSyncClient {
-    this.model.loadSnapshot(snapshot?.piles ?? [], snapshot?.pieces ?? [], snapshot?.mats ?? []);
+    this.model.loadSnapshot(snapshot?.piles ?? [], snapshot?.pieces ?? [], snapshot?.mats ?? [], snapshot?.annotations ?? []);
     this.view.applyEvent({ type: "snapshot", piles: this.model.allPiles(), pieces: this.model.allPieces(), mats: this.model.allMats() });
     return this.becomeHost(remainingPeerIds);
   }
