@@ -97,6 +97,8 @@ export class TableApp implements TableView {
   private app = new Application();
   private world = new Container();
   private model = new TableModel();
+  private initialized = false;
+  private pendingEvents: TableEvent[] = [];
   /** Who's viewing this table — needed to render Hide correctly (see
    * docs/ARCHITECTURE.md "Hiding a card"): only this peer sees the true front of
    * anything it hid itself. Defaults to a local-only placeholder until the room
@@ -283,6 +285,10 @@ export class TableApp implements TableView {
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("keyup", this.onKeyUp);
     this.app.ticker.add((ticker) => this.tickCamera(ticker.deltaMS / 1000));
+    this.initialized = true;
+    const pending = this.pendingEvents;
+    this.pendingEvents = [];
+    for (const event of pending) this.applyEvent(event);
   }
 
   destroy(): void {
@@ -326,6 +332,10 @@ export class TableApp implements TableView {
    * (including the host's own actions looped back to itself) — the *only* way the
    * model/view change once a syncClient is set. See syncProtocol.ts's TableEvent. */
   applyEvent(event: TableEvent): void {
+    if (!this.initialized) {
+      this.pendingEvents.push(event);
+      return;
+    }
     if (event.type === "pile-upserted") {
       this.model.setPile(event.pile);
       const view = this.views.get(event.pile.id);
