@@ -589,6 +589,7 @@ export function RoomTable({ slug }: { slug: string }) {
             {T.spawnCardButton}
           </button>
         )}
+        <button onClick={() => tableRef.current?.addRectangle()} title="Add rectangle">▭</button>
         <button
           class={"hud-icon-button" + (eyesClosed ? " active" : "")}
           onClick={toggleEyesClosed}

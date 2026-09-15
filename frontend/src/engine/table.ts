@@ -13,7 +13,7 @@ import { CARD_HEIGHT, CARD_WIDTH, CardDef, renderCard, resolveDisplay } from "./
 import { MatDef, MAT_HEIGHT, MAT_WIDTH, renderMat } from "./mat";
 import { TableSyncClient, TableView } from "../net/roomConnection";
 import { TableEvent } from "../net/syncProtocol";
-import { MatState, PieceState, PileState, TableModel } from "./pileModel";
+import { MatState, PieceState, PileState, TableAnnotation, TableModel } from "./pileModel";
 import { PieceDef, PIECE_SIZE, renderPiece } from "./piece";
 import { computeSeatPositions } from "./seating";
 import { UI_TEXT } from "../uiText";
@@ -140,6 +140,7 @@ export class TableApp implements TableView {
   private pendingLocalFlips = new Set<string>();
   private effectsConfig: PresentationEffects = { enabled: true, particles: true, intensity: 1 };
   private motionTargets = new Map<string, { view: Container; x: number; y: number; rotation: number }>();
+  private annotationViews = new Map<string, Graphics>();
   private matViews = new Map<string, Container>();
   private matFaceLayers = new Map<string, Container>();
   /** This client's own GM status, per docs/DECISIONS.md D26 — set once ui/RoomTable.tsx
@@ -334,6 +335,12 @@ export class TableApp implements TableView {
     this.effectsConfig = config ?? { enabled: true, particles: true, intensity: 1 };
   }
 
+  addRectangle(): void {
+    const annotation: Omit<TableAnnotation, "id"> = { kind: "rect", x: 0, y: 0, x2: 180, y2: 120, color: 0x4fa8ff, width: 3 };
+    if (this.syncClient) this.syncClient.sendRequest({ type: "create-annotation", annotation });
+    else this.applyEvent({ type: "annotation-upserted", annotation: { ...annotation, id: `local-${Date.now()}` } });
+  }
+
   /** The underlying object model — net/roomConnection.ts needs the actual instance
    * (not a copy) so that a host's in-process mutations (via HostTableSync, applied
    * directly to this same TableModel) and TableApp's own rendering never disagree. */
@@ -403,6 +410,13 @@ export class TableApp implements TableView {
       this.model.removeMat(event.matId);
       this.motionTargets.delete(`mat:${event.matId}`);
       this.removeMatView(event.matId);
+    } else if (event.type === "annotation-upserted") {
+      this.model.setAnnotation(event.annotation);
+      this.redrawAnnotation(event.annotation);
+    } else if (event.type === "annotation-removed") {
+      this.model.removeAnnotation(event.annotationId);
+      this.annotationViews.get(event.annotationId)?.destroy();
+      this.annotationViews.delete(event.annotationId);
     } else if (event.type === "snapshot") {
       for (const pileId of [...this.views.keys()]) this.removeView(pileId);
       for (const pieceId of [...this.pieceViews.keys()]) this.removePieceView(pieceId);
@@ -412,6 +426,7 @@ export class TableApp implements TableView {
       for (const mat of event.mats ?? []) this.mountMatView(mat);
       for (const pile of event.piles) this.mountView(pile);
       for (const piece of event.pieces ?? []) this.mountPieceView(piece);
+      for (const annotation of event.annotations ?? []) this.redrawAnnotation(annotation);
     } else if (event.type === "drag-hint") {
       // Purely cosmetic (see syncProtocol.ts's TableEvent doc comment): moves the view
       // to roughly where someone else is dragging it, without touching the model at
@@ -430,6 +445,13 @@ export class TableApp implements TableView {
     } else if (event.type === "cursor-hint") {
       this.updateCursor(event.byPeerId, event.x, event.y);
     }
+  }
+
+  private redrawAnnotation(annotation: TableAnnotation): void {
+    let view = this.annotationViews.get(annotation.id);
+    if (!view) { view = new Graphics(); this.annotationViews.set(annotation.id, view); this.world.addChild(view); }
+    view.clear();
+    if (annotation.kind === "rect") view.rect(annotation.x - (annotation.x2 ?? 0) / 2, annotation.y - (annotation.y2 ?? 0) / 2, annotation.x2 ?? 0, annotation.y2 ?? 0).fill({ color: annotation.color, alpha: 0.18 }).stroke({ color: annotation.color, width: annotation.width });
   }
 
   /** Move (creating if needed) the small colored marker showing where `peerId`'s
