@@ -142,6 +142,11 @@ export class PackageDistributor {
     return this.localPackageJson !== null;
   }
 
+  /** Push proactively when signaling announces a new peer. This closes the startup
+   * race where the guest's first request arrives before the host's side-channel link
+   * is fully attached. */
+  sendTo(peerId: string): void { if (this.localPackageJson !== null) this.sendPackageTo(peerId); }
+
   /** Call whenever this client becomes a peer of some host (see
    * roomConnection.ts's becomePeerOf) in a room with a custom package. A no-op if this
    * client already has content — most commonly because it's the one that picked the

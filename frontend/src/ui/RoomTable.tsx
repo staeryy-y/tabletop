@@ -384,6 +384,7 @@ export function RoomTable({ slug }: { slug: string }) {
         toast(`${event.name} joined the table`);
         otherPeerIdsRef.current.add(event.peerId);
         roomConnRef.current?.addPeer(event.peerId);
+        packageDistributorRef.current?.sendTo(event.peerId);
         setPeers((prev) => new Map(prev).set(event.peerId, event));
       } else if (event.type === "presence-changed") {
         setPeers((prev) => new Map(prev).set(event.peerId, event));
