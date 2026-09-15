@@ -819,14 +819,14 @@ function NewMatModal({ onCreate, onCancel }: { onCreate: (entry: MatEntry) => vo
         <textarea value={text} onInput={(e) => setText((e.target as HTMLTextAreaElement).value)} />
       </label>
       <div class="editor-row">
-        <label>
+        {!text.trim() && <><label>
           {t.widthLabel}
           <input type="number" min="80" value={width} onInput={(e) => setWidth(Number((e.target as HTMLInputElement).value) || 220)} />
         </label>
         <label>
           {t.heightLabel}
           <input type="number" min="60" value={height} onInput={(e) => setHeight(Number((e.target as HTMLInputElement).value) || 160)} />
-        </label>
+        </label></>}
         <label>
           {t.backgroundLabel}
           <input type="color" value={background} onInput={(e) => setBackground((e.target as HTMLInputElement).value)} />
@@ -889,11 +889,13 @@ function MatEntriesEditor({ entries, onChange }: { entries: MatEntry[]; onChange
             <input type="file" accept="image/*" onChange={(e) => uploadImage(i, (e.target as HTMLInputElement).files?.[0])} />
             <label>{t.copyCountLabel}<input type="number" min="1" step="1" value={entry.count ?? 1} onInput={(e) => update(i, { count: Number((e.target as HTMLInputElement).value) })} /></label>
             <textarea value={entry.text ?? ""} placeholder={t.textPlaceholder} onInput={(e) => update(i, { text: (e.target as HTMLTextAreaElement).value || undefined })} />
-            {!entry.text?.trim() && <div class="editor-row">
-              <input type="number" min="80" value={entry.width ?? 220} aria-label={t.widthLabel} onInput={(e) => update(i, { width: Number((e.target as HTMLInputElement).value) || undefined })} />
-              <input type="number" min="60" value={entry.height ?? 160} aria-label={t.heightLabel} onInput={(e) => update(i, { height: Number((e.target as HTMLInputElement).value) || undefined })} />
+            <div class="editor-row">
+              {!entry.text?.trim() && <>
+                <input type="number" min="80" value={entry.width ?? 220} aria-label={t.widthLabel} onInput={(e) => update(i, { width: Number((e.target as HTMLInputElement).value) || undefined })} />
+                <input type="number" min="60" value={entry.height ?? 160} aria-label={t.heightLabel} onInput={(e) => update(i, { height: Number((e.target as HTMLInputElement).value) || undefined })} />
+              </>}
               <input type="color" value={colorToCss(entry.background) ?? "#3d4a3d"} aria-label={t.backgroundLabel} onInput={(e) => update(i, { background: Number.parseInt((e.target as HTMLInputElement).value.slice(1), 16) })} />
-            </div>}
+            </div>
             <label class="checkbox">
               <input type="checkbox" checked={entry.locked ?? false} onChange={(e) => update(i, { locked: (e.target as HTMLInputElement).checked || undefined })} />
               {t.startsLockedLabel}

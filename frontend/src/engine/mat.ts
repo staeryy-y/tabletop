@@ -22,9 +22,10 @@ export interface MatDef {
 }
 
 function dimensions(def: MatDef): { width: number; height: number } {
-  if (def.text?.trim() && def.width === undefined && def.height === undefined) {
+  if (def.text?.trim() && !def.image && !def.symbol) {
     const lines = def.text.split("\n");
-    const width = Math.min(520, Math.max(180, Math.max(...lines.map((line) => line.length), 1) * 8 + 32));
+    // Rule-sheet mats are content-sized: never clamp them to an authored maximum.
+    const width = Math.max(180, Math.max(...lines.map((line) => line.length), 1) * 8 + 32);
     const height = Math.max(90, lines.length * 20 + 28);
     return { width, height };
   }
