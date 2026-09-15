@@ -340,6 +340,18 @@ export class TableApp implements TableView {
     if (this.syncClient) this.syncClient.sendRequest({ type: "create-annotation", annotation });
     else this.applyEvent({ type: "annotation-upserted", annotation: { ...annotation, id: `local-${Date.now()}` } });
   }
+  addCircle(): void {
+    const annotation: Omit<TableAnnotation, "id"> = { kind: "circle", x: 0, y: 0, x2: 70, y2: 70, color: 0xffd66b, width: 3 };
+    if (this.syncClient) this.syncClient.sendRequest({ type: "create-annotation", annotation }); else this.applyEvent({ type: "annotation-upserted", annotation: { ...annotation, id: `local-${Date.now()}` } });
+  }
+  addLine(): void {
+    const annotation: Omit<TableAnnotation, "id"> = { kind: "line", x: -90, y: 0, x2: 90, y2: 0, color: 0xffffff, width: 4 };
+    if (this.syncClient) this.syncClient.sendRequest({ type: "create-annotation", annotation }); else this.applyEvent({ type: "annotation-upserted", annotation: { ...annotation, id: `local-${Date.now()}` } });
+  }
+  addText(): void {
+    const annotation: Omit<TableAnnotation, "id"> = { kind: "text", x: 0, y: 0, text: "Table note", color: 0xffffff, width: 2 };
+    if (this.syncClient) this.syncClient.sendRequest({ type: "create-annotation", annotation }); else this.applyEvent({ type: "annotation-upserted", annotation: { ...annotation, id: `local-${Date.now()}` } });
+  }
 
   /** The underlying object model — net/roomConnection.ts needs the actual instance
    * (not a copy) so that a host's in-process mutations (via HostTableSync, applied
@@ -452,6 +464,9 @@ export class TableApp implements TableView {
     if (!view) { view = new Graphics(); this.annotationViews.set(annotation.id, view); this.world.addChild(view); }
     view.clear();
     if (annotation.kind === "rect") view.rect(annotation.x - (annotation.x2 ?? 0) / 2, annotation.y - (annotation.y2 ?? 0) / 2, annotation.x2 ?? 0, annotation.y2 ?? 0).fill({ color: annotation.color, alpha: 0.18 }).stroke({ color: annotation.color, width: annotation.width });
+    if (annotation.kind === "circle") view.ellipse(annotation.x, annotation.y, (annotation.x2 ?? 70) / 2, (annotation.y2 ?? annotation.x2 ?? 70) / 2).fill({ color: annotation.color, alpha: 0.18 }).stroke({ color: annotation.color, width: annotation.width });
+    if (annotation.kind === "line") view.moveTo(annotation.x, annotation.y).lineTo(annotation.x2 ?? annotation.x, annotation.y2 ?? annotation.y).stroke({ color: annotation.color, width: annotation.width });
+    if (annotation.kind === "text") { const label = new Text({ text: annotation.text ?? "", style: { fill: annotation.color, fontSize: 20, fontWeight: "bold" } }); label.position.set(annotation.x, annotation.y); view.addChild(label); }
   }
 
   /** Move (creating if needed) the small colored marker showing where `peerId`'s

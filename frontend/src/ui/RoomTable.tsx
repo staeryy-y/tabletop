@@ -590,6 +590,9 @@ export function RoomTable({ slug }: { slug: string }) {
           </button>
         )}
         <button onClick={() => tableRef.current?.addRectangle()} title="Add rectangle">▭</button>
+        <button onClick={() => tableRef.current?.addCircle()} title="Add circle">○</button>
+        <button onClick={() => tableRef.current?.addLine()} title="Draw line">╱</button>
+        <button onClick={() => tableRef.current?.addText()} title="Add text">T</button>
         <button
           class={"hud-icon-button" + (eyesClosed ? " active" : "")}
           onClick={toggleEyesClosed}
