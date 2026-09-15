@@ -141,6 +141,7 @@ export class TableApp implements TableView {
   private effectsConfig: PresentationEffects = { enabled: true, particles: true, intensity: 1 };
   private motionTargets = new Map<string, { view: Container; x: number; y: number; rotation: number }>();
   private annotationViews = new Map<string, Graphics>();
+  private annotationDrag: { id: string; startX: number; startY: number; start: TableAnnotation; resize: boolean } | null = null;
   private matViews = new Map<string, Container>();
   private matFaceLayers = new Map<string, Container>();
   /** This client's own GM status, per docs/DECISIONS.md D26 — set once ui/RoomTable.tsx
@@ -462,6 +463,21 @@ export class TableApp implements TableView {
   private redrawAnnotation(annotation: TableAnnotation): void {
     let view = this.annotationViews.get(annotation.id);
     if (!view) { view = new Graphics(); this.annotationViews.set(annotation.id, view); this.world.addChild(view); }
+    view.eventMode = "static";
+    view.cursor = "move";
+    view.removeAllListeners();
+    view.on("pointerdown", (e: FederatedPointerEvent) => {
+      e.stopPropagation();
+      const p = this.world.toLocal(e.global);
+      this.annotationDrag = { id: annotation.id, startX: p.x, startY: p.y, start: { ...annotation }, resize: Boolean((e.nativeEvent as PointerEvent | undefined)?.shiftKey) };
+    });
+    view.on("pointermove", (e: FederatedPointerEvent) => {
+      if (!this.annotationDrag || this.annotationDrag.id !== annotation.id) return;
+      const p = this.world.toLocal(e.global); const dX = p.x - this.annotationDrag.startX; const dY = p.y - this.annotationDrag.startY;
+      const next = { ...this.annotationDrag.start, ...(this.annotationDrag.resize ? { x2: Math.max(10, (this.annotationDrag.start.x2 ?? 80) + dX), y2: Math.max(10, (this.annotationDrag.start.y2 ?? 60) + dY) } : { x: this.annotationDrag.start.x + dX, y: this.annotationDrag.start.y + dY }) };
+      this.model.setAnnotation(next); this.redrawAnnotation(next);
+    });
+    view.on("pointerup", () => { if (this.annotationDrag?.id === annotation.id) { const value = this.model.getAnnotation(annotation.id); if (value && this.syncClient) this.syncClient.sendRequest({ type: "update-annotation", annotation: value }); this.annotationDrag = null; } });
     view.clear();
     if (annotation.kind === "rect") view.rect(annotation.x - (annotation.x2 ?? 0) / 2, annotation.y - (annotation.y2 ?? 0) / 2, annotation.x2 ?? 0, annotation.y2 ?? 0).fill({ color: annotation.color, alpha: 0.18 }).stroke({ color: annotation.color, width: annotation.width });
     if (annotation.kind === "circle") view.ellipse(annotation.x, annotation.y, (annotation.x2 ?? 70) / 2, (annotation.y2 ?? annotation.x2 ?? 70) / 2).fill({ color: annotation.color, alpha: 0.18 }).stroke({ color: annotation.color, width: annotation.width });

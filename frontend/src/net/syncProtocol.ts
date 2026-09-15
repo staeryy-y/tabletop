@@ -90,6 +90,7 @@ export type TableRequest =
    * being manipulated; it's purely presence. */
   | { type: "cursor-hint"; x: number; y: number }
   | { type: "create-annotation"; annotation: Omit<TableAnnotation, "id"> }
+  | { type: "update-annotation"; annotation: TableAnnotation }
   | { type: "remove-annotation"; annotationId: string };
   
 
@@ -329,6 +330,11 @@ export class HostTableSync {
       case "remove-annotation":
         this.model.removeAnnotation(req.annotationId);
         touchedAnnotations.add(req.annotationId);
+        break;
+      case "update-annotation":
+        if (!this.model.getAnnotation(req.annotation.id)) return;
+        this.model.setAnnotation(req.annotation);
+        touchedAnnotations.add(req.annotation.id);
         break;
     }
 
