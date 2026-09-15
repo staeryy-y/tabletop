@@ -136,7 +136,7 @@ export function AdminDashboard({ me, onLoggedOut }: { me: Me; onLoggedOut: () =>
               {T.gamePackagesNavLink}
               <select value={roomPackage} onChange={(e) => setRoomPackage((e.target as HTMLSelectElement).value)}>
                 <option value="bundled:generic-freeform">{T.genericFreeformOption}</option>
-                <option value="bundled:dnd5e-srd">{T.dnd5eOption}</option>
+                <option value="bundled:citadel-bluff">Citadel Bluff (16-card bluffing game)</option>
                 {customPackages.map((p) => (
                   <option value={`custom:${p.id}`} key={p.id}>
                     {T.yourPackageOption(p.pkg.name)}

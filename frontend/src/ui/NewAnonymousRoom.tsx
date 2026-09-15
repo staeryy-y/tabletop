@@ -57,7 +57,7 @@ export function NewAnonymousRoom() {
           {T.gameLabel}
           <select value={gameDefRef} onChange={(e) => setGameDefRef((e.target as HTMLSelectElement).value)}>
             <option value="bundled:generic-freeform">{T.genericFreeformOption}</option>
-            <option value="bundled:dnd5e-srd">{T.dnd5eOption}</option>
+            <option value="bundled:citadel-bluff">Citadel Bluff (16-card bluffing game)</option>
             {customPackages.map((p) => (
               <option value={`custom:${p.id}`} key={p.id}>
                 {T.localPackageOption(p.pkg.name)}

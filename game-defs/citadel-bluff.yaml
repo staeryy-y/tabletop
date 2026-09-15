@@ -1,0 +1,55 @@
+name: Citadel Bluff
+cards:
+  - set: Influence
+    back:
+      title: Seal
+      color: 3355443
+    entries:
+      - id: regent-1
+        count: 1
+        front: { title: Regent, text: "Take 2 coins from the treasury. You may block a levy." , color: 14423100 }
+      - id: regent-2
+        count: 1
+        front: { title: Regent, text: "Take 2 coins from the treasury. You may block a levy." , color: 14423100 }
+      - id: regent-3
+        count: 1
+        front: { title: Regent, text: "Take 2 coins from the treasury. You may block a levy." , color: 14423100 }
+      - id: regent-4
+        count: 1
+        front: { title: Regent, text: "Take 2 coins from the treasury. You may block a levy." , color: 14423100 }
+      - id: archivist-1
+        count: 1
+        front: { title: Archivist, text: "Exchange one card with the citadel, then return one." , color: 4500479 }
+      - id: archivist-2
+        count: 1
+        front: { title: Archivist, text: "Exchange one card with the citadel, then return one." , color: 4500479 }
+      - id: archivist-3
+        count: 1
+        front: { title: Archivist, text: "Exchange one card with the citadel, then return one." , color: 4500479 }
+      - id: archivist-4
+        count: 1
+        front: { title: Archivist, text: "Exchange one card with the citadel, then return one." , color: 4500479 }
+      - id: envoy-1
+        count: 1
+        front: { title: Envoy, text: "Take 2 coins from another player." , color: 16753920 }
+      - id: envoy-2
+        count: 1
+        front: { title: Envoy, text: "Take 2 coins from another player." , color: 16753920 }
+      - id: envoy-3
+        count: 1
+        front: { title: Envoy, text: "Take 2 coins from another player." , color: 16753920 }
+      - id: envoy-4
+        count: 1
+        front: { title: Envoy, text: "Take 2 coins from another player." , color: 16753920 }
+      - id: warden-1
+        count: 1
+        front: { title: Warden, text: "Block an Envoy action targeting you." , color: 9419919 }
+      - id: warden-2
+        count: 1
+        front: { title: Warden, text: "Block an Envoy action targeting you." , color: 9419919 }
+      - id: warden-3
+        count: 1
+        front: { title: Warden, text: "Block an Envoy action targeting you." , color: 9419919 }
+      - id: warden-4
+        count: 1
+        front: { title: Warden, text: "Block an Envoy action targeting you." , color: 9419919 }
